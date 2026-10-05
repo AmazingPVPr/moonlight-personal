@@ -1033,22 +1033,7 @@ Flickable {
                     ToolTip.text: qsTr("You must restart any game currently in progress for this setting to take effect")
                 }
 
-                CheckBox {
-                    id: muteOnFocusLossCheck
-                    width: parent.width
-                    text: qsTr("Mute audio stream when Moonlight is not the active window")
-                    font.pointSize: 12
-                    visible: SystemProperties.hasDesktopEnvironment
-                    checked: StreamingPreferences.muteOnFocusLoss
-                    onToggled: {
-                        StreamingPreferences.muteOnFocusLoss = checked
-                    }
 
-                    ToolTip.delay: 1000
-                    ToolTip.timeout: 5000
-                    ToolTip.visible: hovered
-                    ToolTip.text: qsTr("Mutes Moonlight's audio when you Alt+Tab out of the stream or click on a different window.")
-                }
             }
         }
 
@@ -1439,11 +1424,155 @@ Flickable {
                     checked: StreamingPreferences.pauseVideoWhenUnfocused
                     onToggled: StreamingPreferences.pauseVideoWhenUnfocused = checked
                 }
+                RowLayout {
+                    width: parent.width
+                    spacing: 8
+                    enabled: StreamingPreferences.pauseVideoWhenUnfocused
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Delay before pausing")
+                        font.pointSize: 10
+                        wrapMode: Text.Wrap
+                    }
+                    SpinBox {
+                        objectName: "unfocusedPauseDelaySpinBox"
+                        Layout.preferredWidth: 160
+                        from: 0
+                        to: 3600
+                        editable: true
+                        value: StreamingPreferences.unfocusedPauseDelaySeconds
+                        onValueModified: StreamingPreferences.unfocusedPauseDelaySeconds = value
+                        Accessible.name: qsTr("Delay before pausing video, in seconds")
+                    }
+                    Label {
+                        text: qsTr("seconds")
+                        font.pointSize: 10
+                    }
+                }
+                Label {
+                    width: parent.width
+                    text: qsTr("0 pauses immediately.")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                    enabled: StreamingPreferences.pauseVideoWhenUnfocused
+                }
                 Label {
                     width: parent.width
                     text: qsTr("Also pause when you use another window. Audio can continue playing; network use continues while connected.")
                     font.pointSize: 9
                     wrapMode: Text.Wrap
+                }
+            }
+        }
+
+        GroupBox {
+            width: parent.width - parent.leftPadding - parent.rightPadding
+            padding: 12
+            title: "<font color=\"skyblue\">" + qsTr("Background audio") + "</font>"
+            font.pointSize: 12
+
+            Column {
+                anchors.fill: parent
+                spacing: 5
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Audio resumes when you return. These delays are separate from video pausing.")
+                    font.pointSize: 10
+                    wrapMode: Text.Wrap
+                }
+                CheckBox {
+                    objectName: "muteHiddenCheck"
+                    width: parent.width
+                    text: qsTr("Mute audio when hidden")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.muteAudioWhenHidden
+                    onToggled: StreamingPreferences.muteAudioWhenHidden = checked
+                }
+                Label {
+                    width: parent.width
+                    text: qsTr("Includes minimizing and switching to another supported virtual desktop.")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                }
+                RowLayout {
+                    width: parent.width
+                    spacing: 8
+                    enabled: StreamingPreferences.muteAudioWhenHidden
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Delay before muting")
+                        font.pointSize: 10
+                        wrapMode: Text.Wrap
+                    }
+                    SpinBox {
+                        objectName: "hiddenAudioMuteDelaySpinBox"
+                        Layout.preferredWidth: 160
+                        from: 0
+                        to: 3600
+                        editable: true
+                        value: StreamingPreferences.hiddenAudioMuteDelaySeconds
+                        onValueModified: StreamingPreferences.hiddenAudioMuteDelaySeconds = value
+                        Accessible.name: qsTr("Delay before muting hidden audio, in seconds")
+                    }
+                    Label {
+                        text: qsTr("seconds")
+                        font.pointSize: 10
+                    }
+                }
+                Label {
+                    width: parent.width
+                    text: qsTr("0 mutes immediately.")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                    enabled: StreamingPreferences.muteAudioWhenHidden
+                }
+                CheckBox {
+                    id: muteOnFocusLossCheck
+                    objectName: "muteUnfocusedCheck"
+                    width: parent.width
+                    text: qsTr("Mute audio when unfocused")
+                    font.pointSize: 12
+                    visible: SystemProperties.hasDesktopEnvironment
+                    checked: StreamingPreferences.muteOnFocusLoss
+                    onToggled: StreamingPreferences.muteOnFocusLoss = checked
+                }
+                RowLayout {
+                    width: parent.width
+                    spacing: 8
+                    enabled: StreamingPreferences.muteOnFocusLoss
+                    visible: SystemProperties.hasDesktopEnvironment
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Delay before muting")
+                        font.pointSize: 10
+                        wrapMode: Text.Wrap
+                    }
+                    SpinBox {
+                        objectName: "unfocusedAudioMuteDelaySpinBox"
+                        Layout.preferredWidth: 160
+                        from: 0
+                        to: 3600
+                        editable: true
+                        value: StreamingPreferences.unfocusedAudioMuteDelaySeconds
+                        onValueModified: StreamingPreferences.unfocusedAudioMuteDelaySeconds = value
+                        Accessible.name: qsTr("Delay before muting unfocused audio, in seconds")
+                    }
+                    Label {
+                        text: qsTr("seconds")
+                        font.pointSize: 10
+                    }
+                }
+                Label {
+                    width: parent.width
+                    text: qsTr("0 mutes immediately. Unfocused means you are using another window.")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                    visible: SystemProperties.hasDesktopEnvironment
+                    enabled: StreamingPreferences.muteOnFocusLoss
                 }
             }
         }
