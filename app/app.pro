@@ -11,7 +11,7 @@ unix:!macx {
 
 linux: QT += dbus
 SOURCES += streaming/desktopvisibility.cpp
-HEADERS += streaming/desktopvisibility.h streaming/video/pausestate.h
+HEADERS += streaming/desktopvisibility.h streaming/desktopvisibility-x11.h streaming/video/pausestate.h
 RESOURCES += streaming/desktopvisibility.qrc
 
 include(../globaldefs.pri)
@@ -149,7 +149,7 @@ unix:if(!macx|disable-prebuilts) {
         !disable-x11 {
             packagesExist(x11) {
                 DEFINES += HAS_X11
-                PKGCONFIG += x11
+                PKGCONFIG += x11 xcb
             }
         }
     }
