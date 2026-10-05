@@ -49,6 +49,30 @@ public:
     int videoFrames = 0;
 };
 
+static AVFrame* makeVideoImage()
+{
+    AVFrame* frame = av_frame_alloc();
+    assert(frame);
+    frame->format = AV_PIX_FMT_YUV420P;
+    frame->width = 320;
+    frame->height = 180;
+    frame->color_primaries = AVCOL_PRI_BT709;
+    frame->color_trc = AVCOL_TRC_BT709;
+    frame->colorspace = AVCOL_SPC_BT709;
+    frame->color_range = AVCOL_RANGE_MPEG;
+    frame->pkt_dts = LiGetMicroseconds();
+    assert(av_frame_get_buffer(frame, 32) == 0);
+    for (int y = 0; y < frame->height; ++y) {
+        std::memset(frame->data[0] + y * frame->linesize[0], 96, frame->width);
+    }
+    for (int plane = 1; plane < 3; ++plane) {
+        for (int y = 0; y < frame->height / 2; ++y) {
+            std::memset(frame->data[plane] + y * frame->linesize[plane], 128, frame->width / 2);
+        }
+    }
+    return frame;
+}
+
 int main(int argc, char** argv)
 {
     QCoreApplication application(argc, argv);
@@ -60,7 +84,7 @@ int main(int argc, char** argv)
 
     // X11 can present to an unmapped surface. This window never appears or
     // gains focus; the test still exercises real Vulkan buffer presentation.
-    SDL_Window* window = SDL_CreateWindow("Moonlight Personal startup regression test",
+    SDL_Window* window = SDL_CreateWindow("Moonshine Client startup regression test",
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 320, 180,
         SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN);
     if (!window) {
@@ -99,6 +123,40 @@ int main(int argc, char** argv)
                 assert(stats.renderedFrames == 0);
                 assert(initialBuffers == 1);
             }
+
+            // Combine the real renderer and production one-frame gate. A
+            // black mapping buffer must never spend the real-video budget.
+            assert(renderer.presentedFrameSerial() == 0);
+            VideoPauseState preview;
+            preview.beginStream(true, true);
+            assert(preview.synchronize().requestKeyframe);
+            assert(preview.acceptFrame(true));
+            assert(preview.canReceiveOutput());
+            unsigned completed = 0;
+            stats = {};
+            {
+                Pacer pacer(&renderer, &stats, &preview, [&] { completed++; });
+                assert(pacer.initialize(window, 60, false));
+                pacer.setPaused(true);
+                renderer.waitToRender();
+                for (unsigned i = 0; i < 100; ++i) {
+                    pacer.submitFrame(makeVideoImage());
+                }
+                pacer.renderOnMainThread();
+                assert(renderer.videoFrames == 1);
+                assert(renderer.presentedFrameSerial() == 1);
+                assert(stats.renderedFrames == 1);
+                assert(completed == 1);
+                assert(!preview.isPreviewPending());
+                assert(!preview.canReceiveOutput());
+                for (unsigned i = 0; i < 100; ++i) {
+                    pacer.submitFrame(makeVideoImage());
+                }
+                pacer.renderOnMainThread();
+                assert(renderer.videoFrames == 1);
+                assert(renderer.presentedFrameSerial() == 1);
+                assert(completed == 1);
+            }
         }
     }
 
@@ -107,5 +165,5 @@ int main(int argc, char** argv)
     if (unavailable) {
         return 77;
     }
-    std::puts("Production Vulkan initial-buffer presentation and paused startup passed (no host/video decoding).");
+    std::puts("Production Vulkan black mapping and exactly one real image while paused passed (no host connection).");
 }
