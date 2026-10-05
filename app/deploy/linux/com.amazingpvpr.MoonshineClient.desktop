@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Moonshine Client
+Comment=Stream presets and independent background video and audio controls
+Exec=moonshine-client
+Icon=moonshine-client
+Terminal=false
+Type=Application
+Categories=Game;Network;RemoteAccess;
+StartupWMClass=com.amazingpvpr.MoonshineClient
