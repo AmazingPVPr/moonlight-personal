@@ -31,6 +31,7 @@ CenteredGridView {
     // also be done in CliStartStreamSegue.qml, since this code does not run
     // for command-line initiated streams.
     StackView.onActivated: {
+        StreamingPreferences.setProfileHost("")
         // Setup signals on CM
         ComputerManager.computerAddCompleted.connect(addComplete)
 

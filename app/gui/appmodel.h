@@ -31,6 +31,8 @@ public:
 
     Q_INVOKABLE int getDirectLaunchAppIndex();
 
+    Q_INVOKABLE QString getComputerUuid() const;
+
     Q_INVOKABLE int getRunningAppId();
 
     Q_INVOKABLE QString getRunningAppName();

@@ -14,6 +14,43 @@ Flickable {
 
     signal languageChanged()
 
+    property string profileContextName: {
+        var appView = stackView.find(function(item, index) { return item instanceof AppView })
+        return appView ? appView.objectName : ""
+    }
+
+    function selectModelValue(combo, model, value) {
+        if (!model) {
+            return
+        }
+        for (var i = 0; i < model.count; ++i) {
+            if (model.get(i).val === value) {
+                combo.currentIndex = i
+                combo.recalculateWidth()
+                return
+            }
+        }
+        combo.currentIndex = 0
+        combo.recalculateWidth()
+    }
+
+    function refreshProfileControls() {
+        resolutionComboBox.refreshSelection()
+        fpsComboBox.reinitialize()
+        selectModelValue(windowModeComboBox, windowModeComboBox.model, StreamingPreferences.windowMode)
+        selectModelValue(audioComboBox, audioListModel, StreamingPreferences.audioConfig)
+        selectModelValue(decoderComboBox, decoderListModel, StreamingPreferences.videoDecoderSelection)
+        selectModelValue(codecComboBox, codecListModel, StreamingPreferences.videoCodecConfig)
+        selectModelValue(rendererComboBox, rendererListModel, StreamingPreferences.rendererSelection)
+        selectModelValue(captureSysKeysModeComboBox, captureSysKeysModeListModel, StreamingPreferences.captureSysKeysMode)
+        slider.value = StreamingPreferences.bitrateKbps
+    }
+
+    Connections {
+        target: StreamingPreferences
+        function onCurrentProfileChanged() { settingsPage.refreshProfileControls() }
+    }
+
     boundsBehavior: Flickable.OvershootBounds
 
     contentWidth: settingsColumn1.width > settingsColumn2.width ? settingsColumn1.width : settingsColumn2.width
@@ -98,6 +135,18 @@ Flickable {
         id: settingsColumn1
         width: settingsPage.width / 2
         spacing: 15
+
+        GroupBox {
+            width: parent.width - parent.leftPadding - parent.rightPadding
+            padding: 12
+            title: "<font color=\"skyblue\">" + qsTr("Stream presets") + "</font>"
+            font.pointSize: 12
+
+            ProfileControls {
+                anchors.fill: parent
+                contextName: settingsPage.profileContextName
+            }
+        }
 
         GroupBox {
             id: basicSettingsGroupBox
@@ -240,6 +289,7 @@ Flickable {
                         }
 
                         id: resolutionComboBox
+                        objectName: "resolutionComboBox"
                         maximumWidth: parent.width / 2
                         textRole: "text"
                         model: ListModel {
@@ -270,6 +320,30 @@ Flickable {
                                 video_height: "2160"
                                 is_custom: false
                             }
+                        }
+
+                        function refreshSelection() {
+                            var selected = -1
+                            var custom = -1
+                            for (var i = 0; i < resolutionListModel.count; ++i) {
+                                var entry = resolutionListModel.get(i)
+                                if (entry.is_custom) {
+                                    custom = i
+                                }
+                                else if (parseInt(entry.video_width) === StreamingPreferences.width &&
+                                         parseInt(entry.video_height) === StreamingPreferences.height) {
+                                    selected = i
+                                }
+                            }
+                            if (custom >= 0) {
+                                resolutionListModel.setProperty(custom, "text", selected < 0 ?
+                                    qsTr("Custom") + " (" + StreamingPreferences.width + "x" + StreamingPreferences.height + ")" : qsTr("Custom"))
+                                resolutionListModel.setProperty(custom, "video_width", selected < 0 ? "" + StreamingPreferences.width : "")
+                                resolutionListModel.setProperty(custom, "video_height", selected < 0 ? "" + StreamingPreferences.height : "")
+                            }
+                            currentIndex = selected >= 0 ? selected : custom
+                            lastIndexValue = currentIndex
+                            recalculateWidth()
                         }
 
                         function updateBitrateForSelection() {
@@ -591,6 +665,12 @@ Flickable {
                         }
 
                         function reinitialize() {
+                            // Rebuild the single custom entry for the selected preset.
+                            for (var customIndex = fpsListModel.count - 1; customIndex >= 0; --customIndex) {
+                                if (fpsListModel.get(customIndex).is_custom) {
+                                    fpsListModel.remove(customIndex)
+                                }
+                            }
                             // Add native refresh rate for all attached displays
                             var done = false
                             for (var displayIndex = 0; !done; displayIndex++) {
@@ -652,6 +732,7 @@ Flickable {
                         }
 
                         id: fpsComboBox
+                        objectName: "fpsComboBox"
                         maximumWidth: parent.width / 2
                         textRole: "text"
                         // ::onActivated must be used, as it only listens for when the index is changed by a human
@@ -688,6 +769,7 @@ Flickable {
 
                     Slider {
                         id: slider
+                        objectName: "slider"
 
                         value: StreamingPreferences.bitrateKbps
 
@@ -695,15 +777,15 @@ Flickable {
                         from : 500
                         to: StreamingPreferences.unlockBitrate ? 500000 : 150000
 
-                        snapMode: "SnapOnRelease"
+                        snapMode: Slider.SnapOnRelease
                         width: Math.min(bitrateDesc.implicitWidth, parent.width - (resetBitrateButton.visible ? resetBitrateButton.width + parent.spacing : 0))
 
                         onValueChanged: {
                             bitrateTitle.text = qsTr("Video bitrate: %1 Mbps").arg(value / 1000.0)
-                            StreamingPreferences.bitrateKbps = value
                         }
 
                         onMoved: {
+                            StreamingPreferences.bitrateKbps = value
                             StreamingPreferences.autoAdjustBitrate = false
                         }
 
@@ -798,6 +880,7 @@ Flickable {
                     }
 
                     id: windowModeComboBox
+                    objectName: "windowModeComboBox"
                     visible: SystemProperties.hasDesktopEnvironment
                     enabled: !SystemProperties.rendererAlwaysFullScreen
                     hoverEnabled: true
@@ -822,7 +905,7 @@ Flickable {
                         text: qsTr("V-Sync")
                         font.pointSize:  12
                         checked: StreamingPreferences.enableVsync
-                        onCheckedChanged: {
+                        onToggled: {
                             StreamingPreferences.enableVsync = checked
                         }
 
@@ -839,7 +922,7 @@ Flickable {
                         font.pointSize:  12
                         enabled: StreamingPreferences.enableVsync
                         checked: StreamingPreferences.enableVsync && StreamingPreferences.framePacing
-                        onCheckedChanged: {
+                        onToggled: {
                             StreamingPreferences.framePacing = checked
                         }
                         ToolTip.delay: 1000
@@ -857,7 +940,7 @@ Flickable {
 
                     enabled: SystemProperties.supportsHdr
                     checked: enabled && StreamingPreferences.enableHdr
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.enableHdr = checked
                     }
 
@@ -910,6 +993,7 @@ Flickable {
                     }
 
                     id: audioComboBox
+                    objectName: "audioComboBox"
                     textRole: "text"
                     model: ListModel {
                         id: audioListModel
@@ -939,7 +1023,7 @@ Flickable {
                     text: qsTr("Mute host PC speakers while streaming")
                     font.pointSize: 12
                     checked: !StreamingPreferences.playAudioOnHost
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.playAudioOnHost = !checked
                     }
 
@@ -956,7 +1040,7 @@ Flickable {
                     font.pointSize: 12
                     visible: SystemProperties.hasDesktopEnvironment
                     checked: StreamingPreferences.muteOnFocusLoss
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.muteOnFocusLoss = checked
                     }
 
@@ -985,7 +1069,7 @@ Flickable {
                     text: qsTr("Optimize game settings for streaming")
                     font.pointSize:  12
                     checked: StreamingPreferences.gameOptimizations
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.gameOptimizations = checked
                     }
                 }
@@ -996,7 +1080,7 @@ Flickable {
                     text: qsTr("Quit app on host PC after ending stream")
                     font.pointSize: 12
                     checked: StreamingPreferences.quitAppAfter
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.quitAppAfter = checked
                     }
 
@@ -1257,7 +1341,7 @@ Flickable {
                     text: qsTr("Show connection quality warnings")
                     font.pointSize: 12
                     checked: StreamingPreferences.connectionWarnings
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.connectionWarnings = checked
                     }
                 }
@@ -1268,7 +1352,7 @@ Flickable {
                     text: qsTr("Show configuration warnings")
                     font.pointSize: 12
                     checked: StreamingPreferences.configurationWarnings
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.configurationWarnings = checked
                     }
                 }
@@ -1280,7 +1364,7 @@ Flickable {
                     text: qsTr("Discord Rich Presence integration")
                     font.pointSize: 12
                     checked: StreamingPreferences.richPresence
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.richPresence = checked
                     }
 
@@ -1296,7 +1380,7 @@ Flickable {
                     text: qsTr("Keep the display awake while streaming")
                     font.pointSize: 12
                     checked: StreamingPreferences.keepAwake
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.keepAwake = checked
                     }
 
@@ -1318,6 +1402,53 @@ Flickable {
         spacing: 15
 
         GroupBox {
+            width: parent.width - parent.leftPadding - parent.rightPadding
+            padding: 12
+            title: "<font color=\"skyblue\">" + qsTr("Background video") + "</font>"
+            font.pointSize: 12
+
+            Column {
+                anchors.fill: parent
+                spacing: 5
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Keep the connection active and resume video when you return.")
+                    font.pointSize: 10
+                    wrapMode: Text.Wrap
+                }
+                CheckBox {
+                    objectName: "pauseHiddenCheck"
+                    width: parent.width
+                    text: qsTr("Pause video when hidden")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.pauseVideoWhenHidden
+                    onToggled: StreamingPreferences.pauseVideoWhenHidden = checked
+                }
+                Label {
+                    width: parent.width
+                    text: qsTr("Includes minimizing and switching to another supported virtual desktop.")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                }
+                CheckBox {
+                    objectName: "pauseUnfocusedCheck"
+                    width: parent.width
+                    text: qsTr("Pause video when unfocused")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.pauseVideoWhenUnfocused
+                    onToggled: StreamingPreferences.pauseVideoWhenUnfocused = checked
+                }
+                Label {
+                    width: parent.width
+                    text: qsTr("Also pause when you use another window. Audio can continue playing; network use continues while connected.")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                }
+            }
+        }
+
+        GroupBox {
             id: inputSettingsGroupBox
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
             padding: 12
@@ -1335,7 +1466,7 @@ Flickable {
                     text: qsTr("Optimize mouse for remote desktop instead of games")
                     font.pointSize:  12
                     checked: StreamingPreferences.absoluteMouseMode
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.absoluteMouseMode = checked
                     }
 
@@ -1358,6 +1489,7 @@ Flickable {
                         font.pointSize: 12
                         enabled: SystemProperties.hasDesktopEnvironment
                         checked: StreamingPreferences.captureSysKeysMode !== StreamingPreferences.CSK_OFF || !SystemProperties.hasDesktopEnvironment
+                        onToggled: captureSysKeysModeComboBox.updatePref()
 
                         ToolTip.delay: 1000
                         ToolTip.timeout: 10000
@@ -1387,6 +1519,8 @@ Flickable {
                             activated(currentIndex)
                         }
 
+                        id: captureSysKeysModeComboBox
+                        objectName: "captureSysKeysModeComboBox"
                         enabled: captureSysKeysCheck.checked && captureSysKeysCheck.enabled
                         textRole: "text"
                         model: ListModel {
@@ -1415,10 +1549,6 @@ Flickable {
                             updatePref()
                         }
 
-                        // This handles transition of the checkbox state
-                        onEnabledChanged: {
-                            updatePref()
-                        }
                     }
                 }
 
@@ -1429,7 +1559,7 @@ Flickable {
                     text: qsTr("Use touchscreen as a virtual trackpad")
                     font.pointSize:  12
                     checked: !StreamingPreferences.absoluteTouchMode
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.absoluteTouchMode = !checked
                     }
 
@@ -1446,7 +1576,7 @@ Flickable {
                     text: qsTr("Swap left and right mouse buttons")
                     font.pointSize:  12
                     checked: StreamingPreferences.swapMouseButtons
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.swapMouseButtons = checked
                     }
                 }
@@ -1458,7 +1588,7 @@ Flickable {
                     text: qsTr("Reverse mouse scrolling direction")
                     font.pointSize: 12
                     checked: StreamingPreferences.reverseScrollDirection
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.reverseScrollDirection = checked
                     }
                 }
@@ -1482,7 +1612,7 @@ Flickable {
                     text: qsTr("Swap A/B and X/Y gamepad buttons")
                     font.pointSize: 12
                     checked: StreamingPreferences.swapFaceButtons
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.swapFaceButtons = checked
                     }
 
@@ -1498,7 +1628,7 @@ Flickable {
                     text: qsTr("Force gamepad #1 always connected")
                     font.pointSize:  12
                     checked: !StreamingPreferences.multiController
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.multiController = !checked
                     }
 
@@ -1516,7 +1646,7 @@ Flickable {
                     text: qsTr("Enable mouse control with gamepads by holding the 'Start' button")
                     font.pointSize: 12
                     checked: StreamingPreferences.gamepadMouse
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.gamepadMouse = checked
                     }
                 }
@@ -1528,7 +1658,7 @@ Flickable {
                     font.pointSize: 12
                     visible: SystemProperties.hasDesktopEnvironment
                     checked: StreamingPreferences.backgroundGamepad
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.backgroundGamepad = checked
                     }
 
@@ -1575,6 +1705,7 @@ Flickable {
                     }
 
                     id: decoderComboBox
+                    objectName: "decoderComboBox"
                     textRole: "text"
                     model: ListModel {
                         id: decoderListModel
@@ -1628,6 +1759,7 @@ Flickable {
                     }
 
                     id: codecComboBox
+                    objectName: "codecComboBox"
                     textRole: "text"
                     model: ListModel {
                         id: codecListModel
@@ -1685,6 +1817,7 @@ Flickable {
                     }
 
                     id: rendererComboBox
+                    objectName: "rendererComboBox"
                     visible: SystemProperties.isDarwin
                     textRole: "text"
                     model: ListModel {
@@ -1719,7 +1852,7 @@ Flickable {
                     font.pointSize: 12
 
                     checked: StreamingPreferences.enableYUV444
-                    onCheckedChanged: {
+                    onToggled: {
                         // This is called on init, so only reset to default bitrate when checked state changes.
                         if (StreamingPreferences.enableYUV444 != checked) {
                             StreamingPreferences.enableYUV444 = checked
@@ -1749,7 +1882,7 @@ Flickable {
                     font.pointSize: 12
 
                     checked: StreamingPreferences.unlockBitrate
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.unlockBitrate = checked
                         StreamingPreferences.bitrateKbps = Math.min(StreamingPreferences.bitrateKbps, slider.to)
                         slider.value = StreamingPreferences.bitrateKbps
@@ -1767,7 +1900,7 @@ Flickable {
                     text: qsTr("Automatically find PCs on the local network (Recommended)")
                     font.pointSize: 12
                     checked: StreamingPreferences.enableMdns
-                    onCheckedChanged: {
+                    onToggled: {
                         // This is called on init, so only do the work if we've
                         // actually changed the value.
                         if (StreamingPreferences.enableMdns != checked) {
@@ -1788,7 +1921,7 @@ Flickable {
                     text: qsTr("Automatically detect blocked connections (Recommended)")
                     font.pointSize: 12
                     checked: StreamingPreferences.detectNetworkBlocking
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.detectNetworkBlocking = checked
                     }
                 }
@@ -1799,7 +1932,7 @@ Flickable {
                     text: qsTr("Show performance stats while streaming")
                     font.pointSize: 12
                     checked: StreamingPreferences.showPerformanceOverlay
-                    onCheckedChanged: {
+                    onToggled: {
                         StreamingPreferences.showPerformanceOverlay = checked
                     }
 
