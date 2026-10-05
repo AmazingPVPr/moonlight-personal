@@ -1,12 +1,14 @@
-# Moonlight Personal
+# Moonshine Client
 
-Personal fork of Moonlight Qt 6.2.0 with saved stream presets and automatic background video pausing. This is an experimental client build; the original Moonlight client can remain installed alongside it.
+Independent fork of Moonlight Qt 6.2.0 with saved stream presets, a real startup preview, and separate background video and audio controls. This is an experimental Linux client build.
 
 - Create, duplicate, rename, and delete presets in **Settings → Stream presets**. Presets include stream quality, audio, and input settings. Choose one in a computer's app list to remember that choice for that computer. Changes apply to the next stream.
 - **Pause video when hidden or minimized** also detects other virtual desktops on KDE Plasma/Wayland and EWMH-compatible X11 desktops. It is enabled by default. Unknown desktop visibility leaves video active.
-- **Pause video when unfocused** is a separate option, disabled by default. The existing audio mute option remains independent.
+- **Pause video when unfocused** is a separate option, disabled by default. Choose a delay in seconds: **0** pauses immediately, **60** waits a minute. Returning focus cancels the countdown.
+- A new stream displays one real video frame before pausing, so an unfocused window shows a useful preview. The initial window buffer appears independently of video decoding.
+- **Background audio** has independent mute switches and delays for unfocused and hidden windows. Audio can continue after video pauses and mute later. The defaults preserve the previous audio behavior.
 - The client keeps receiving the stream while skipping video decoding and rendering. Returning resumes from a fresh keyframe. The host continues encoding, bandwidth remains in use, and allocated decoder memory can remain reserved.
-- This client uses its own settings, pairing identity, and cache under the application name **Moonlight Personal**. Pair it with your existing Sunshine/compatible Windows host in the usual way. No host changes are required.
+- This client uses its own settings, pairing identity, and cache under the application name **Moonshine Client**. It imports the previous Moonlight Personal fork's settings and pairing on first launch. Pair with your existing Sunshine/compatible Windows host in the usual way if this is a fresh installation.
 
 Linux development build, with the dependencies listed below and Qt DBus installed:
 
@@ -16,10 +18,10 @@ mkdir -p build
 cd build
 qmake6 ../moonlight-qt.pro CONFIG+=release
 make -j6 release
-./app/moonlight-personal
+./app/moonshine-client
 ```
 
-The native build has been compiled on this Linux client with Qt 6.11.2, FFmpeg 9, and SDL2/SDL3 compatibility libraries. Profile persistence, desktop observer behavior, worker callbacks, pause recovery gates, and production render queues have automated tests. Actual Windows-host streaming, visual resume behavior, and resource savings still require a live check; see [tests/README.md](tests/README.md). Windows/macOS/Steam Link packaging scripts inherited from upstream have not been adapted for this fork.
+The native build has been compiled on this Linux client with Qt 6.11.2, FFmpeg 9, and SDL2/SDL3 compatibility libraries. Profile persistence, desktop observers, worker callbacks, pause recovery, and production render queues have automated tests. Live desktop and unfocused pause/resume were checked with a Windows host; startup preview and independent timers need a live repeat after this update. See [tests/README.md](tests/README.md) for checks and [packaging/arch](packaging/arch) for the Arch package recipe. Windows/macOS/Steam Link packaging inherited from upstream has not been adapted for this fork.
 
 The upstream project and build instructions follow.
 
