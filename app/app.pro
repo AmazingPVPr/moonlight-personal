@@ -1,12 +1,18 @@
 QT += core quick network quickcontrols2 svg
 CONFIG += c++17
+ui-test: DEFINES += MOONLIGHT_UI_TEST
 
 unix:!macx {
-    TARGET = moonlight
+    TARGET = moonlight-personal
 } else {
     # On macOS, this is the name displayed in the global menu bar
-    TARGET = Moonlight
+    TARGET = MoonlightPersonal
 }
+
+linux: QT += dbus
+SOURCES += streaming/desktopvisibility.cpp
+HEADERS += streaming/desktopvisibility.h streaming/video/pausestate.h
+RESOURCES += streaming/desktopvisibility.qrc
 
 include(../globaldefs.pri)
 
@@ -533,22 +539,19 @@ unix:!macx: {
 
     target.path = $$PREFIX/$$BINDIR/
 
-    desktop.files = deploy/linux/com.moonlight_stream.Moonlight.desktop
+    desktop.files = deploy/linux/com.amazingpvpr.MoonlightPersonal.desktop
     desktop.path = $$PREFIX/$$DATADIR/applications/
 
     icons.files = res/moonlight.svg
     icons.path = $$PREFIX/$$DATADIR/icons/hicolor/scalable/apps/
 
-    appstream.files = deploy/linux/com.moonlight_stream.Moonlight.appdata.xml
-    appstream.path = $$PREFIX/$$DATADIR/metainfo/
-
-    INSTALLS += target desktop icons appstream
+    INSTALLS += target desktop icons
 }
 win32 {
     RC_ICONS = moonlight.ico
     QMAKE_TARGET_COMPANY = Moonlight Game Streaming Project
-    QMAKE_TARGET_DESCRIPTION = Moonlight Game Streaming Client
-    QMAKE_TARGET_PRODUCT = Moonlight
+    QMAKE_TARGET_DESCRIPTION = Moonlight Personal Streaming Client
+    QMAKE_TARGET_PRODUCT = Moonlight Personal
 
     CONFIG -= embed_manifest_exe
     QMAKE_LFLAGS += /MANIFEST:embed /MANIFESTINPUT:$${PWD}/Moonlight.exe.manifest

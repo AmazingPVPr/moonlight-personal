@@ -14,6 +14,11 @@
 #include <QTemporaryFile>
 #include <QRegularExpression>
 
+#ifdef MOONLIGHT_UI_TEST
+#include <QQuickWindow>
+#include <QTimer>
+#endif
+
 #ifdef Q_OS_UNIX
 #include <sys/socket.h>
 #include <signal.h>
@@ -430,7 +435,7 @@ int main(int argc, char *argv[])
     // it is critical that these be called before Path::initialize().
     QCoreApplication::setOrganizationName("Moonlight Game Streaming Project");
     QCoreApplication::setOrganizationDomain("moonlight-stream.com");
-    QCoreApplication::setApplicationName("Moonlight");
+    QCoreApplication::setApplicationName("Moonlight Personal");
 
     if (QFile(QDir::currentPath() + "/portable.dat").exists()) {
         QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -715,8 +720,8 @@ int main(int argc, char *argv[])
     // Set our app name for SDL to use with PulseAudio and PipeWire. This matches what we
     // provide as our app name to libsoundio too. On SDL 2.0.18+, SDL_APP_NAME is also used
     // for screensaver inhibitor reporting.
-    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_APP_NAME, "Moonlight");
-    SDL_SetHint(SDL_HINT_APP_NAME, "Moonlight");
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_APP_NAME, "Moonlight Personal");
+    SDL_SetHint(SDL_HINT_APP_NAME, "Moonlight Personal");
 
     // SDL will try to lock the mouse cursor on Wayland if it's not visible in order to
     // support applications that assume they can warp the cursor (which isn't possible
@@ -754,6 +759,7 @@ int main(int argc, char *argv[])
     }
 
     QGuiApplication app(argc, argv);
+    app.setApplicationDisplayName("Moonlight Personal");
 
 #ifdef Q_OS_DARWIN
     // macOS defaults "Keyboard navigation" to text fields and lists only, which
@@ -926,9 +932,9 @@ int main(int argc, char *argv[])
 #endif
 
     // This is necessary to show our icon correctly on Wayland
-    app.setDesktopFileName("com.moonlight_stream.Moonlight");
-    qputenv("SDL_VIDEO_WAYLAND_WMCLASS", "com.moonlight_stream.Moonlight");
-    qputenv("SDL_VIDEO_X11_WMCLASS", "com.moonlight_stream.Moonlight");
+    app.setDesktopFileName("com.amazingpvpr.MoonlightPersonal");
+    qputenv("SDL_VIDEO_WAYLAND_WMCLASS", "com.amazingpvpr.MoonlightPersonal");
+    qputenv("SDL_VIDEO_X11_WMCLASS", "com.amazingpvpr.MoonlightPersonal");
 
     // Register our C++ types for QML
     qmlRegisterType<ComputerModel>("ComputerModel", 1, 0, "ComputerModel");
@@ -1033,13 +1039,40 @@ int main(int argc, char *argv[])
     }
 
     if (hasGUI) {
+#ifdef MOONLIGHT_UI_TEST
+        // Test builds can load a local QML test view using the real singletons.
+        const QString testView = qEnvironmentVariable("MOONLIGHT_UI_TEST_VIEW");
+        if (!testView.isEmpty()) {
+            initialView = testView;
+        }
+#endif
         engine.rootContext()->setContextProperty("initialView", initialView);
         engine.rootContext()->setContextProperty("runConfigChecks", commandLineParserResult == GlobalCommandLineParser::NormalStartRequested);
+
+#ifdef MOONLIGHT_UI_TEST
+        if (!testView.isEmpty()) {
+            engine.rootContext()->setContextProperty("runConfigChecks", false);
+        }
+#endif
 
         // Load the main.qml file
         engine.load(QUrl(QStringLiteral("qrc:/gui/main.qml")));
         if (engine.rootObjects().isEmpty())
             return -1;
+
+#ifdef MOONLIGHT_UI_TEST
+        const QString screenshot = qEnvironmentVariable("MOONLIGHT_UI_TEST_SCREENSHOT");
+        if (!screenshot.isEmpty()) {
+            QTimer::singleShot(2000, &app, [&engine, screenshot]() {
+                auto window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+                if (!window || !window->grabWindow().save(screenshot)) {
+                    qWarning() << "UI test screenshot failed";
+                }
+            });
+        }
+        // Ensure a broken test view cannot leave a test process running.
+        QTimer::singleShot(15000, &app, [&app]() { app.exit(2); });
+#endif
     }
 
     int err = app.exec();
