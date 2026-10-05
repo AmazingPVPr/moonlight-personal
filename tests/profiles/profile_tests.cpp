@@ -1,6 +1,8 @@
 #include "settings/streamingpreferences.h"
+#include "settings/settingsmigration.h"
 
 #include <QCoreApplication>
+#include <QMetaProperty>
 #include <QProcess>
 #include <QSettings>
 #include <QSignalSpy>
@@ -23,6 +25,24 @@ static void configureStorage(const QString& path)
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, path);
 }
 
+class ApplicationNameGuard
+{
+public:
+    ApplicationNameGuard() : m_Name(QCoreApplication::applicationName()) {}
+    ~ApplicationNameGuard() { QCoreApplication::setApplicationName(m_Name); }
+private:
+    QString m_Name;
+};
+
+static QVariantMap settingsValues(const QSettings& settings)
+{
+    QVariantMap values;
+    for (const QString& key : settings.allKeys()) {
+        values.insert(key, settings.value(key));
+    }
+    return values;
+}
+
 static int runPersistenceFixture(const QString& mode)
 {
     auto* prefs = StreamingPreferences::get();
@@ -37,6 +57,11 @@ static int runPersistenceFixture(const QString& mode)
         prefs->bitrateKbps = 70000;
         prefs->videoCodecConfig = StreamingPreferences::VCC_FORCE_HEVC;
         prefs->pauseVideoWhenUnfocused = true;
+        prefs->setUnfocusedPauseDelaySeconds(12);
+        prefs->muteOnFocusLoss = true;
+        prefs->muteAudioWhenHidden = true;
+        prefs->setUnfocusedAudioMuteDelaySeconds(75);
+        prefs->setHiddenAudioMuteDelaySeconds(5);
         prefs->language = StreamingPreferences::LANG_FR;
         prefs->save();
         prefs->setProfileHost("windows-host-b");
@@ -53,13 +78,18 @@ static int runPersistenceFixture(const QString& mode)
         // This is a genuinely new process; its initial selection must never be
         // the last host's preset or leak that preset into the global fallback.
         if (prefs->currentProfile() != "Default" || prefs->width != 1920 || prefs->fps != 60) return 4;
-        if (!prefs->pauseVideoWhenUnfocused || prefs->language != StreamingPreferences::LANG_FR) return 5;
+        if (!prefs->pauseVideoWhenUnfocused || prefs->unfocusedPauseDelaySeconds != 12 ||
+            prefs->language != StreamingPreferences::LANG_FR || !prefs->muteAudioWhenHidden ||
+            prefs->unfocusedAudioMuteDelaySeconds != 75 || prefs->hiddenAudioMuteDelaySeconds != 5 ||
+            prefs->muteOnFocusLoss) return 5;
         prefs->setProfileHost("windows-host-a");
         if (prefs->currentProfile() != "Gaming / HDR" || prefs->width != 3840 || prefs->fps != 120 ||
             !prefs->enableHdr || prefs->bitrateKbps != 70000 ||
-            prefs->videoCodecConfig != StreamingPreferences::VCC_FORCE_HEVC) return 6;
+            prefs->videoCodecConfig != StreamingPreferences::VCC_FORCE_HEVC || !prefs->muteOnFocusLoss) return 6;
         prefs->setProfileHost("windows-host-b");
-        if (prefs->currentProfile() != "Work" || prefs->width != 2560 || prefs->height != 1440 || prefs->fps != 30) return 7;
+        if (prefs->currentProfile() != "Work" || prefs->width != 2560 || prefs->height != 1440 || prefs->fps != 30 ||
+            prefs->muteOnFocusLoss || !prefs->muteAudioWhenHidden ||
+            prefs->unfocusedAudioMuteDelaySeconds != 75 || prefs->hiddenAudioMuteDelaySeconds != 5) return 7;
         prefs->setProfileHost("new-host");
         if (prefs->currentProfile() != "Default" || prefs->width != 1920 || prefs->fps != 60 || prefs->enableHdr) return 8;
         return 0;
@@ -160,21 +190,124 @@ private slots:
         auto* prefs = StreamingPreferences::get();
         QVERIFY(prefs->pauseVideoWhenHidden);
         QVERIFY(!prefs->pauseVideoWhenUnfocused);
+        QCOMPARE(prefs->unfocusedPauseDelaySeconds, 0);
         QVERIFY(prefs->createProfile("Example"));
         prefs->language = StreamingPreferences::LANG_JA;
         prefs->enableMdns = false;
         prefs->pauseVideoWhenHidden = false;
         prefs->pauseVideoWhenUnfocused = true;
+        prefs->setUnfocusedPauseDelaySeconds(17);
         prefs->setCurrentProfile("Default");
         QCOMPARE(prefs->language, StreamingPreferences::LANG_JA);
         QVERIFY(!prefs->enableMdns);
         QVERIFY(!prefs->pauseVideoWhenHidden);
         QVERIFY(prefs->pauseVideoWhenUnfocused);
+        QCOMPARE(prefs->unfocusedPauseDelaySeconds, 17);
+        QVERIFY(prefs->createProfile("Another"));
+        prefs->setUnfocusedPauseDelaySeconds(33);
+        prefs->setCurrentProfile("Example");
+        QCOMPARE(prefs->unfocusedPauseDelaySeconds, 33);
         prefs->reload();
         QCOMPARE(prefs->language, StreamingPreferences::LANG_JA);
         QVERIFY(!prefs->enableMdns);
         QVERIFY(!prefs->pauseVideoWhenHidden);
         QVERIFY(prefs->pauseVideoWhenUnfocused);
+        QCOMPARE(prefs->unfocusedPauseDelaySeconds, 33);
+    }
+
+    void backgroundAudioDelaysStayGlobalAndIndependent()
+    {
+        auto* prefs = StreamingPreferences::get();
+        QVERIFY(!prefs->muteAudioWhenHidden);
+        QVERIFY(!prefs->muteOnFocusLoss);
+        QCOMPARE(prefs->unfocusedAudioMuteDelaySeconds, 0);
+        QCOMPARE(prefs->hiddenAudioMuteDelaySeconds, 0);
+        QVERIFY(prefs->createProfile("Audio"));
+        prefs->muteOnFocusLoss = true;
+        prefs->muteAudioWhenHidden = true;
+        prefs->setUnfocusedAudioMuteDelaySeconds(120);
+        prefs->setHiddenAudioMuteDelaySeconds(2);
+        prefs->setUnfocusedPauseDelaySeconds(60);
+        prefs->setCurrentProfile("Default");
+        // Preserve the existing per-preset focus mute choice, while new timers
+        // and hidden muting apply globally without changing video's timer.
+        QVERIFY(!prefs->muteOnFocusLoss);
+        QVERIFY(prefs->muteAudioWhenHidden);
+        QCOMPARE(prefs->unfocusedAudioMuteDelaySeconds, 120);
+        QCOMPARE(prefs->hiddenAudioMuteDelaySeconds, 2);
+        QCOMPARE(prefs->unfocusedPauseDelaySeconds, 60);
+        prefs->setUnfocusedAudioMuteDelaySeconds(3);
+        prefs->setHiddenAudioMuteDelaySeconds(44);
+        prefs->muteAudioWhenHidden = false;
+        prefs->setCurrentProfile("Audio");
+        QVERIFY(prefs->muteOnFocusLoss);
+        QVERIFY(!prefs->muteAudioWhenHidden);
+        QCOMPARE(prefs->unfocusedAudioMuteDelaySeconds, 3);
+        QCOMPARE(prefs->hiddenAudioMuteDelaySeconds, 44);
+        QCOMPARE(prefs->unfocusedPauseDelaySeconds, 60);
+        prefs->save();
+        prefs->reload();
+        QCOMPARE(prefs->unfocusedAudioMuteDelaySeconds, 3);
+        QCOMPARE(prefs->hiddenAudioMuteDelaySeconds, 44);
+        QVERIFY(!prefs->muteAudioWhenHidden);
+        prefs->setCurrentProfile("Audio");
+        QVERIFY(prefs->muteOnFocusLoss);
+    }
+
+    void backgroundDelaysAreClamped_data()
+    {
+        QTest::addColumn<QByteArray>("propertyName");
+        QTest::addColumn<QString>("settingsKey");
+        QTest::addColumn<int>("input");
+        QTest::addColumn<int>("expected");
+        const QList<QPair<QByteArray, QString>> properties = {
+            {"unfocusedPauseDelaySeconds", "unfocusedpausedelayseconds"},
+            {"unfocusedAudioMuteDelaySeconds", "unfocusedaudiomutedelayseconds"},
+            {"hiddenAudioMuteDelaySeconds", "hiddenaudiomutedelayseconds"}
+        };
+        const QList<QPair<int, int>> limits = {{-1, 0}, {0, 0}, {7, 7}, {3600, 3600}, {3601, 3600}};
+        for (const auto& property : properties) {
+            for (const auto& limit : limits) {
+                const QByteArray name = property.first + '-' + QByteArray::number(limit.first);
+                QTest::newRow(name.constData()) << property.first << property.second << limit.first << limit.second;
+            }
+        }
+    }
+
+    void backgroundDelaysAreClamped()
+    {
+        QFETCH(QByteArray, propertyName);
+        QFETCH(QString, settingsKey);
+        QFETCH(int, input);
+        QFETCH(int, expected);
+        auto* prefs = StreamingPreferences::get();
+        const int propertyIndex = prefs->metaObject()->indexOfProperty(propertyName.constData());
+        QVERIFY(propertyIndex >= 0);
+        const QMetaProperty property = prefs->metaObject()->property(propertyIndex);
+        QSignalSpy delaySpy(prefs, property.notifySignal());
+        QVERIFY(prefs->setProperty(propertyName.constData(), input));
+        QCOMPARE(prefs->property(propertyName.constData()).toInt(), expected);
+        QCOMPARE(delaySpy.count(), expected == 0 ? 0 : 1);
+        QVERIFY(prefs->setProperty(propertyName.constData(), input));
+        QCOMPARE(delaySpy.count(), expected == 0 ? 0 : 1);
+
+        // A manually edited configuration must obey the same limits.
+        QSettings settings;
+        settings.setValue(settingsKey, input);
+        settings.sync();
+        prefs->reload();
+        QCOMPARE(prefs->property(propertyName.constData()).toInt(), expected);
+
+        // C++ launch overrides use public members; saving must also validate.
+        int* publicValue = propertyName == "unfocusedPauseDelaySeconds" ? &prefs->unfocusedPauseDelaySeconds :
+            propertyName == "unfocusedAudioMuteDelaySeconds" ? &prefs->unfocusedAudioMuteDelaySeconds : &prefs->hiddenAudioMuteDelaySeconds;
+        *publicValue = input;
+        prefs->save();
+        QCOMPARE(*publicValue, expected);
+        QCOMPARE(QSettings().value(settingsKey).toInt(), expected);
+        *publicValue = input;
+        std::unique_ptr<StreamingPreferences> snapshot(prefs->createSessionSnapshot());
+        QCOMPARE(snapshot->property(propertyName.constData()).toInt(), expected);
     }
 
     void sessionSnapshotDoesNotChangeWithEditedProfiles()
@@ -184,16 +317,117 @@ private slots:
         prefs->width = 3840;
         prefs->fps = 120;
         prefs->pauseVideoWhenUnfocused = true;
+        prefs->setUnfocusedPauseDelaySeconds(29);
+        prefs->muteOnFocusLoss = true;
+        prefs->muteAudioWhenHidden = true;
+        prefs->setUnfocusedAudioMuteDelaySeconds(91);
+        prefs->setHiddenAudioMuteDelaySeconds(4);
         prefs->absoluteMouseMode = true;
         std::unique_ptr<StreamingPreferences> snapshot(prefs->createSessionSnapshot());
         prefs->setCurrentProfile("Default");
         prefs->pauseVideoWhenUnfocused = false;
+        prefs->setUnfocusedPauseDelaySeconds(0);
+        prefs->muteAudioWhenHidden = false;
+        prefs->setUnfocusedAudioMuteDelaySeconds(0);
+        prefs->setHiddenAudioMuteDelaySeconds(0);
         QCOMPARE(snapshot->width, 3840);
         QCOMPARE(snapshot->fps, 120);
         QVERIFY(snapshot->absoluteMouseMode);
         QVERIFY(snapshot->pauseVideoWhenUnfocused);
+        QCOMPARE(snapshot->unfocusedPauseDelaySeconds, 29);
+        QVERIFY(snapshot->muteOnFocusLoss);
+        QVERIFY(snapshot->muteAudioWhenHidden);
+        QCOMPARE(snapshot->unfocusedAudioMuteDelaySeconds, 91);
+        QCOMPARE(snapshot->hiddenAudioMuteDelaySeconds, 4);
         QCOMPARE(prefs->width, 1920);
         QCOMPARE(prefs->fps, 60);
+    }
+
+    void legacyMigrationPreservesTypedCredentialsAndHostProfiles()
+    {
+        ApplicationNameGuard applicationName;
+        QCoreApplication::setApplicationName("LegacyPersonal");
+        QSettings legacy;
+        legacy.clear();
+        legacy.sync();
+        auto* prefs = StreamingPreferences::get();
+        prefs->reload();
+        prefs->setProfileHost("migration-host");
+        QVERIFY(prefs->createProfile("Legacy TV"));
+        prefs->width = 3840;
+        prefs->fps = 120;
+        prefs->enableHdr = true;
+        prefs->setHiddenAudioMuteDelaySeconds(7);
+        prefs->save();
+        // Synthetic credentials exercise opaque byte arrays and identity
+        // strings without reading any real pairing information.
+        legacy.setValue("uniqueid", QString("synthetic-client-uuid"));
+        legacy.setValue("certificate", QByteArray::fromHex("30040001ff00"));
+        legacy.setValue("key", QByteArray::fromHex("010203000405"));
+        legacy.setValue("computers/1/uuid", QString("migration-host"));
+        legacy.setValue("computers/size", 1);
+        legacy.sync();
+        const QVariantMap expected = settingsValues(legacy);
+        QVERIFY(expected.contains("streamprofiles/1/name"));
+        QVERIFY(expected.contains("hoststreamprofiles/1/uuid"));
+
+        QCoreApplication::setApplicationName("MigrationImported");
+        QSettings current;
+        current.clear();
+        current.sync();
+        QVERIFY(SettingsMigration::importLegacyPreferencesIfEmpty("LegacyPersonal"));
+        QCOMPARE(settingsValues(current), expected);
+        for (auto value = expected.cbegin(); value != expected.cend(); ++value) {
+            QCOMPARE(current.value(value.key()).userType(), value.value().userType());
+        }
+        QCOMPARE(settingsValues(legacy), expected);
+        prefs->reload();
+        prefs->setProfileHost("migration-host");
+        QCOMPARE(prefs->currentProfile(), QString("Legacy TV"));
+        QCOMPARE(prefs->width, 3840);
+        QCOMPARE(prefs->fps, 120);
+        QVERIFY(prefs->enableHdr);
+        QCOMPARE(prefs->hiddenAudioMuteDelaySeconds, 7);
+        QCOMPARE(current.value("certificate").toByteArray(), QByteArray::fromHex("30040001ff00"));
+        QCOMPARE(current.value("key").toByteArray(), QByteArray::fromHex("010203000405"));
+    }
+
+    void legacyMigrationNeverOverwritesCurrentSettings()
+    {
+        ApplicationNameGuard applicationName;
+        QCoreApplication::setApplicationName("MigrationLegacyExisting");
+        QSettings legacy;
+        legacy.clear();
+        legacy.setValue("width", 3840);
+        legacy.setValue("certificate", QByteArray("legacy-certificate"));
+        legacy.setValue("legacy-only", true);
+        legacy.sync();
+        QCoreApplication::setApplicationName("MigrationCurrentExisting");
+        QSettings current;
+        current.clear();
+        current.setValue("width", 1280);
+        current.setValue("certificate", QByteArray("current-certificate"));
+        current.sync();
+        const QVariantMap expected = settingsValues(current);
+        QVERIFY(!SettingsMigration::importLegacyPreferencesIfEmpty("MigrationLegacyExisting"));
+        QCOMPARE(settingsValues(current), expected);
+        QVERIFY(!current.contains("legacy-only"));
+    }
+
+    void absentLegacySettingsDoNotCreateCurrentPreferences()
+    {
+        ApplicationNameGuard applicationName;
+        QCoreApplication::setApplicationName("MigrationMissingLegacy");
+        QSettings legacy;
+        legacy.clear();
+        legacy.sync();
+        QCoreApplication::setApplicationName("MigrationEmptyCurrent");
+        QSettings current;
+        current.clear();
+        current.sync();
+        QVERIFY(!SettingsMigration::importLegacyPreferencesIfEmpty("MigrationMissingLegacy"));
+        QVERIFY(current.allKeys().isEmpty());
+        QVERIFY(legacy.allKeys().isEmpty());
     }
 
     void invalidProfileOperationsHaveNoSideEffects()
