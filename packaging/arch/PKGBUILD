@@ -1,0 +1,96 @@
+pkgname=moonshine-client-git
+pkgver=6.2.0.r46.ge4f0842
+pkgrel=1
+pkgdesc='Moonlight streaming client with presets and independent background video and audio controls'
+arch=('x86_64')
+url='https://github.com/AmazingPVPr/moonlight-personal'
+license=('GPL-3.0-or-later' 'MIT' 'Zlib')
+depends=(
+  'ffmpeg'
+  'glibc'
+  'libdrm'
+  'libgcc'
+  'libglvnd'
+  'libplacebo'
+  'libstdc++'
+  'libva'
+  'libvdpau'
+  'libx11'
+  'libxcb'
+  'openssl'
+  'opus'
+  'qt6-base'
+  'qt6-declarative'
+  'qt6-svg'
+  'qt6-wayland'
+  'sdl2-compat'
+  'sdl2_ttf'
+  'wayland'
+)
+makedepends=('git' 'vulkan-headers')
+checkdepends=('desktop-file-utils')
+optdepends=(
+  'intel-media-driver: VA-API decoding on newer Intel GPUs'
+  'libva-intel-driver: VA-API decoding on older Intel GPUs'
+)
+provides=('moonshine-client')
+conflicts=('moonshine-client')
+source=(
+  'moonshine-client::git+https://github.com/AmazingPVPr/moonlight-personal.git#branch=personal/profiles-video-pause'
+  'moonlight-common-c::git+https://github.com/moonlight-stream/moonlight-common-c.git'
+  'qmdnsengine::git+https://github.com/cgutman/qmdnsengine.git'
+  'SDL_GameControllerDB::git+https://github.com/gabomdq/SDL_GameControllerDB.git'
+  'enet::git+https://github.com/cgutman/enet.git'
+  'nanors::git+https://github.com/sleepybishop/nanors.git'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+pkgver() {
+  cd "$srcdir/moonshine-client"
+  printf '%s.r%s.g%s' "$(cat app/version.txt)" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd "$srcdir/moonshine-client"
+  git submodule init
+  git config submodule.moonlight-common-c/moonlight-common-c.url "$srcdir/moonlight-common-c"
+  git config submodule.qmdnsengine/qmdnsengine.url "$srcdir/qmdnsengine"
+  git config submodule.app/SDL_GameControllerDB.url "$srcdir/SDL_GameControllerDB"
+  git -c protocol.file.allow=always submodule update
+
+  cd moonlight-common-c/moonlight-common-c
+  git submodule init
+  git config submodule.enet.url "$srcdir/enet"
+  git config submodule.nanors.url "$srcdir/nanors"
+  git -c protocol.file.allow=always submodule update
+}
+
+build() {
+  mkdir -p "$srcdir/build"
+  cd "$srcdir/build"
+  qmake6 "$srcdir/moonshine-client/moonlight-qt.pro" PREFIX=/usr CONFIG+=release CONFIG-=ui-test
+  make release
+}
+
+check() {
+  mkdir -p "$srcdir/build/profile-tests"
+  cd "$srcdir/build/profile-tests"
+  qmake6 "$srcdir/moonshine-client/tests/profiles/profiles.pro"
+  make
+  ./profile-tests
+  bash "$srcdir/moonshine-client/tests/video-pause/run.sh"
+  desktop-file-validate "$srcdir/moonshine-client/app/deploy/linux/com.amazingpvpr.MoonshineClient.desktop"
+}
+
+package() {
+  cd "$srcdir/build"
+  make INSTALL_ROOT="$pkgdir" install
+
+  local license_dir="$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 "$srcdir/moonshine-client/LICENSE" "$license_dir/LICENSE"
+  install -Dm644 "$srcdir/moonshine-client/qmdnsengine/qmdnsengine/LICENSE.txt" "$license_dir/qmdnsengine.LICENSE"
+  install -Dm644 "$srcdir/moonshine-client/moonlight-common-c/moonlight-common-c/LICENSE.txt" "$license_dir/moonlight-common-c.LICENSE"
+  install -Dm644 "$srcdir/moonshine-client/moonlight-common-c/moonlight-common-c/enet/LICENSE" "$license_dir/enet.LICENSE"
+  install -Dm644 "$srcdir/moonshine-client/moonlight-common-c/moonlight-common-c/nanors/LICENSE" "$license_dir/nanors.LICENSE"
+  install -Dm644 "$srcdir/moonshine-client/app/SDL_GameControllerDB/LICENSE" "$license_dir/SDL_GameControllerDB.LICENSE"
+}
