@@ -36,8 +36,6 @@
 #include <QtEndian>
 #include <QCoreApplication>
 #include <QThreadPool>
-#include <QSvgRenderer>
-#include <QPainter>
 #include <QImage>
 #include <QGuiApplication>
 #include <QCursor>
@@ -280,7 +278,9 @@ void Session::clSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlag
 bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
                             StreamingPreferences::RendererSelection renderer,
                             SDL_Window* window, int videoFormat, int width, int height,
-                            int frameRate, bool enableVsync, bool enableFramePacing, bool testOnly, IVideoDecoder*& chosenDecoder)
+                            int frameRate, bool enableVsync, bool enableFramePacing, bool testOnly,
+                            IVideoDecoder*& chosenDecoder, bool initiallyPaused,
+                            uint32_t rendererGeneration)
 {
     DECODER_PARAMETERS params;
 
@@ -299,6 +299,9 @@ bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
     params.testOnly = testOnly;
     params.vds = vds;
     params.renderer = renderer;
+    params.initiallyPaused = initiallyPaused;
+    params.startupPreview = !testOnly;
+    params.rendererGeneration = rendererGeneration;
 
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "V-sync %s",
@@ -1802,9 +1805,17 @@ void Session::setDesktopVisible(bool visible)
 
 void Session::updateVideoPause()
 {
-    bool paused = (m_Preferences->pauseVideoWhenHidden &&
-                   (m_WindowHidden || m_WindowMinimized || !m_DesktopVisible.load())) ||
-                  (m_Preferences->pauseVideoWhenUnfocused && !m_WindowFocused);
+    bool hidden = m_WindowHidden || m_WindowMinimized || !m_DesktopVisible.load();
+    Uint32 nowMs = SDL_GetTicks();
+    m_VideoPausePolicy.setHidden(hidden, nowMs);
+    m_AudioMuted.store(m_VideoPausePolicy.shouldMute(
+                m_Preferences->muteOnFocusLoss, m_Preferences->unfocusedAudioMuteDelaySeconds,
+                m_Preferences->muteAudioWhenHidden, m_Preferences->hiddenAudioMuteDelaySeconds,
+                nowMs));
+    bool paused = m_VideoPausePolicy.shouldPause(
+                hidden,
+                m_Preferences->pauseVideoWhenHidden, m_Preferences->pauseVideoWhenUnfocused,
+                m_Preferences->unfocusedPauseDelaySeconds, nowMs);
     if (m_VideoPaused.exchange(paused) == paused) {
         return;
     }
@@ -1824,6 +1835,15 @@ void Session::updateVideoPause()
             LiRequestIdrFrame();
         }
     }
+}
+
+void Session::refreshStartupPreview()
+{
+    SDL_LockMutex(m_DecoderLock);
+    if (m_VideoDecoder != nullptr) {
+        m_VideoDecoder->refreshStartupPreview();
+    }
+    SDL_UnlockMutex(m_DecoderLock);
 }
 
 void Session::exec()
@@ -1892,7 +1912,7 @@ void Session::exec()
 #ifdef Q_OS_DARWIN
     std::string windowName = QString(m_Computer->name).toStdString();
 #else
-    std::string windowName = QString(m_Computer->name + " - Moonlight Personal").toStdString();
+    std::string windowName = QString(m_Computer->name + " - Moonshine Client").toStdString();
 #endif
 
     m_Window = SDL_CreateWindow(windowName.c_str(),
@@ -1930,20 +1950,18 @@ void Session::exec()
     m_WindowHidden = initialWindowFlags & SDL_WINDOW_HIDDEN;
     m_WindowMinimized = initialWindowFlags & SDL_WINDOW_MINIMIZED;
     m_WindowFocused = initialWindowFlags & SDL_WINDOW_INPUT_FOCUS;
+    m_VideoPausePolicy.setFocused(m_WindowFocused, SDL_GetTicks());
     updateVideoPause();
 
     DesktopVisibility desktopVisibility;
-    if (m_Preferences->pauseVideoWhenHidden) {
+    if (m_Preferences->pauseVideoWhenHidden || m_Preferences->muteAudioWhenHidden) {
         QObject::connect(&desktopVisibility, &DesktopVisibility::desktopVisibleChanged,
                          this, &Session::setDesktopVisible, Qt::DirectConnection);
     }
 
-    QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
-    QImage svgImage(ICON_SIZE, ICON_SIZE, QImage::Format_RGBA8888);
-    svgImage.fill(0);
-
-    QPainter svgPainter(&svgImage);
-    svgIconRenderer.render(&svgPainter);
+    QImage svgImage = QImage(QStringLiteral(":/res/moonshine-client.png"))
+            .scaled(ICON_SIZE, ICON_SIZE, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+            .convertToFormat(QImage::Format_RGBA8888);
     SDL_Surface* iconSurface = SDL_CreateRGBSurfaceWithFormatFrom((void*)svgImage.constBits(),
                                                                   svgImage.width(),
                                                                   svgImage.height(),
@@ -2024,6 +2042,9 @@ void Session::exec()
     // because we want to suspend all Qt processing until the stream is over.
     SDL_Event event;
     for (;;) {
+        // Reevaluate on every iteration, including input floods and quiet
+        // windows, so the focus deadline is independent of frame delivery.
+        updateVideoPause();
 #if SDL_VERSION_ATLEAST(2, 0, 18) && !defined(STEAM_LINK)
         // SDL 2.0.18 has a proper wait event implementation that uses platform
         // support to block on events rather than polling on Windows, macOS, X11,
@@ -2034,7 +2055,14 @@ void Session::exec()
         // NB: This behavior was introduced in SDL 2.0.16, but had a few critical
         // issues that could cause indefinite timeouts, delayed joystick detection,
         // and other problems.
-        if (!SDL_WaitEventTimeout(&event, 1000)) {
+        if (!SDL_WaitEventTimeout(&event, int(m_VideoPausePolicy.audioWaitTimeout(
+                m_VideoPausePolicy.waitTimeout(
+                1000, m_VideoPaused.load(), m_Preferences->pauseVideoWhenUnfocused,
+                m_Preferences->unfocusedPauseDelaySeconds, SDL_GetTicks()),
+                m_AudioMuted.load(), m_Preferences->muteOnFocusLoss,
+                m_Preferences->unfocusedAudioMuteDelaySeconds,
+                m_Preferences->muteAudioWhenHidden, m_Preferences->hiddenAudioMuteDelaySeconds,
+                SDL_GetTicks())))) {
             presence.runCallbacks();
             continue;
         }
@@ -2069,7 +2097,20 @@ void Session::exec()
                 }
                 break;
             case SDL_CODE_DESKTOP_VISIBILITY_CHANGED:
+                if (!m_LastDesktopVisible && m_DesktopVisible.load() &&
+                        !m_WindowHidden && !m_WindowMinimized) {
+                    refreshStartupPreview();
+                }
+                m_LastDesktopVisible = m_DesktopVisible.load();
                 updateVideoPause();
+                break;
+            case SDL_CODE_STARTUP_PREVIEW_PRESENTED:
+                if (event.user.windowID == SDL_GetWindowID(m_Window) &&
+                        uint32_t(uintptr_t(event.user.data1)) == m_RendererGeneration) {
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                "First stream frame presented; startup preview complete");
+                    updateVideoPause();
+                }
                 break;
             case SDL_CODE_FLUSH_WINDOW_EVENT_BARRIER:
                 m_FlushingWindowEventsRef--;
@@ -2114,22 +2155,24 @@ void Session::exec()
             switch (event.window.event) {
             case SDL_WINDOWEVENT_FOCUS_LOST:
                 m_WindowFocused = false;
-                if (m_Preferences->muteOnFocusLoss) {
-                    m_AudioMuted = true;
-                }
+                m_VideoPausePolicy.setFocused(false, SDL_GetTicks());
                 m_InputHandler->notifyFocusLost();
                 break;
             case SDL_WINDOWEVENT_FOCUS_GAINED:
-                m_WindowFocused = true;
-                if (m_Preferences->muteOnFocusLoss) {
-                    m_AudioMuted = false;
+                if (!m_WindowFocused) {
+                    refreshStartupPreview();
                 }
+                m_WindowFocused = true;
+                m_VideoPausePolicy.setFocused(true, SDL_GetTicks());
                 m_InputHandler->notifyFocusGained();
                 break;
             case SDL_WINDOWEVENT_HIDDEN:
                 m_WindowHidden = true;
                 break;
             case SDL_WINDOWEVENT_SHOWN:
+                if (m_WindowHidden) {
+                    refreshStartupPreview();
+                }
                 m_WindowHidden = false;
                 break;
             case SDL_WINDOWEVENT_MINIMIZED:
@@ -2137,6 +2180,9 @@ void Session::exec()
                 break;
             case SDL_WINDOWEVENT_RESTORED:
             case SDL_WINDOWEVENT_MAXIMIZED:
+                if (m_WindowMinimized) {
+                    refreshStartupPreview();
+                }
                 m_WindowMinimized = false;
                 break;
             case SDL_WINDOWEVENT_LEAVE:
@@ -2298,6 +2344,7 @@ void Session::exec()
 
                 // Choose a new decoder (hopefully the same one, but possibly
                 // not if a GPU was removed or something).
+                m_RendererGeneration++;
                 if (!chooseDecoder(m_Preferences->videoDecoderSelection,
                                    m_Preferences->rendererSelection,
                                    m_Window, m_ActiveVideoFormat, m_ActiveVideoWidth,
@@ -2305,7 +2352,8 @@ void Session::exec()
                                    enableVsync,
                                    enableVsync && m_Preferences->framePacing,
                                    false,
-                                   s_ActiveSession->m_VideoDecoder)) {
+                                   s_ActiveSession->m_VideoDecoder,
+                                   m_VideoPaused.load(), m_RendererGeneration)) {
                     SDL_UnlockMutex(m_DecoderLock);
                     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                                  "Failed to recreate decoder after reset");
@@ -2334,7 +2382,7 @@ void Session::exec()
             m_InputHandler->updatePointerRegionLock();
 
             SDL_UnlockMutex(m_DecoderLock);
-            if (m_Preferences->pauseVideoWhenHidden) {
+            if (m_Preferences->pauseVideoWhenHidden || m_Preferences->muteAudioWhenHidden) {
                 desktopVisibility.startMonitoring(m_Window);
             }
             break;
