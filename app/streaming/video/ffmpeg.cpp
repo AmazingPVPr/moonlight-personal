@@ -723,11 +723,23 @@ bool FFmpegVideoDecoder::completeInitialization(const AVCodec* decoder, enum AVP
         // Start pacing/render threads only after main-thread preparation has
         // presented its initial buffer and released the render context. This
         // also prevents simultaneous Vulkan swapchain acquisition at startup.
-        m_Pacer = new Pacer(m_FrontendRenderer, &m_ActiveWndVideoStats);
+        m_VideoPauseState.beginStream(params->initiallyPaused, params->startupPreview);
+        const Uint32 windowId = SDL_GetWindowID(params->window);
+        const uint32_t rendererGeneration = params->rendererGeneration;
+        m_Pacer = new Pacer(m_FrontendRenderer, &m_ActiveWndVideoStats,
+                           &m_VideoPauseState, [windowId, rendererGeneration]() {
+            SDL_Event event = {};
+            event.type = SDL_USEREVENT;
+            event.user.windowID = windowId;
+            event.user.code = SDL_CODE_STARTUP_PREVIEW_PRESENTED;
+            event.user.data1 = reinterpret_cast<void*>(uintptr_t(rendererGeneration));
+            SDL_PushEvent(&event);
+        });
         if (!m_Pacer->initialize(params->window, params->frameRate,
                                  params->enableFramePacing || (params->enableVsync && (m_FrontendRenderer->getRendererAttributes() & RENDERER_ATTRIBUTE_FORCE_PACING)))) {
             return false;
         }
+        m_Pacer->setPaused(params->initiallyPaused);
 
         // Only create the decoder thread when instantiating the decoder for real. It will use APIs from
         // moonlight-common-c that can only be legally called with an established connection.
@@ -1869,6 +1881,14 @@ void FFmpegVideoDecoder::setVideoPaused(bool paused)
     }
 }
 
+void FFmpegVideoDecoder::refreshStartupPreview()
+{
+    if (m_VideoPauseState.refreshPreview()) {
+        m_Pacer->setPaused(m_VideoPauseState.isPaused());
+        LiWakeWaitForVideoFrame();
+    }
+}
+
 bool FFmpegVideoDecoder::synchronizeVideoPause()
 {
     auto transition = m_VideoPauseState.synchronize();
@@ -1879,6 +1899,7 @@ bool FFmpegVideoDecoder::synchronizeVideoPause()
         m_FrameInfoQueue.clear();
         m_FramesIn = m_FramesOut = 0;
         m_ConsecutiveFailedDecodes = 0;
+        m_PreviewPacketSubmittedUs = 0;
         if (transition.requestKeyframe) {
             LiRequestIdrFrame();
         }
@@ -1920,7 +1941,7 @@ void FFmpegVideoDecoder::decoderThreadProc()
 
             int err;
             do {
-                if (synchronizeVideoPause() || m_VideoPauseState.isPaused()) {
+                if (synchronizeVideoPause() || !m_VideoPauseState.canReceiveOutput()) {
                     err = AVERROR(EAGAIN);
                     break;
                 }
@@ -1928,7 +1949,7 @@ void FFmpegVideoDecoder::decoderThreadProc()
                 if (err == 0) {
                     // A transition can arrive while avcodec_receive_frame()
                     // runs. Discard that old frame before using its metadata.
-                    if (synchronizeVideoPause() || m_VideoPauseState.isPaused()) {
+                    if (synchronizeVideoPause() || !m_VideoPauseState.canReceiveOutput()) {
                         err = AVERROR(EAGAIN);
                         break;
                     }
@@ -2088,7 +2109,7 @@ void FFmpegVideoDecoder::decoderThreadProc()
                     m_ActiveWndVideoStats.decodedFrames++;
 
                     // Queue the frame for rendering (or render now if pacer is disabled)
-                    if (m_VideoPauseState.hasTransition() || m_VideoPauseState.isPaused()) {
+                    if (m_VideoPauseState.hasTransition() || !m_VideoPauseState.canReceiveOutput()) {
                         av_frame_free(&frame);
                     }
                     else {
@@ -2098,6 +2119,15 @@ void FFmpegVideoDecoder::decoderThreadProc()
                 else if (err == AVERROR(EAGAIN)) {
                     VIDEO_FRAME_HANDLE handle;
                     PDECODE_UNIT du;
+
+                    // A broken/delayed decoder must not poll forever with a
+                    // single paused-preview input. Retry on local visibility
+                    // restoration instead of continuing background work.
+                    if (m_VideoPauseState.isPaused() && m_PreviewPacketSubmittedUs &&
+                            LiGetMicroseconds() - m_PreviewPacketSubmittedUs > 2000000) {
+                        m_VideoPauseState.blockFailedPreview();
+                        continue;
+                    }
 
                     // No output data, so let's try to submit more input data,
                     // while we're waiting for this to frame to come back.
@@ -2112,6 +2142,8 @@ void FFmpegVideoDecoder::decoderThreadProc()
                 }
                 else {
                     char errorstring[512];
+
+                    m_VideoPauseState.blockFailedPreview();
 
                     // FIXME: Should we pop an entry off m_FrameInfoQueue here?
 
@@ -2265,11 +2297,16 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
             SDL_AtomicSet(&m_DecoderThreadShouldQuit, 1);
         }
 
+        m_VideoPauseState.blockFailedPreview();
         m_VideoPauseState.requireKeyframe();
         return DR_NEED_IDR;
     }
 
     m_FrameInfoQueue.enqueue(*du);
+
+    if (m_VideoPauseState.isPaused() && m_VideoPauseState.canPresentPreview()) {
+        m_PreviewPacketSubmittedUs = LiGetMicroseconds();
+    }
 
     m_FramesIn++;
     return DR_OK;

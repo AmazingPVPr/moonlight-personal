@@ -5,6 +5,7 @@
 #include "settings/streamingpreferences.h"
 
 #define SDL_CODE_FRAME_READY 0
+#define SDL_CODE_STARTUP_PREVIEW_PRESENTED 1
 
 #define MAX_SLICES 4
 
@@ -46,6 +47,9 @@ typedef struct _DECODER_PARAMETERS {
     bool enableVsync;
     bool enableFramePacing;
     bool testOnly;
+    bool initiallyPaused;
+    bool startupPreview;
+    uint32_t rendererGeneration;
 } DECODER_PARAMETERS, *PDECODER_PARAMETERS;
 
 #define WINDOW_STATE_CHANGE_SIZE 0x01
@@ -76,6 +80,7 @@ public:
     virtual QSize getDecoderMaxResolution() = 0;
     virtual int submitDecodeUnit(PDECODE_UNIT du) = 0;
     virtual void setVideoPaused(bool) {}
+    virtual void refreshStartupPreview() {}
     virtual void renderFrameOnMainThread() = 0;
     virtual void setHdrMode(bool enabled) = 0;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info) = 0;

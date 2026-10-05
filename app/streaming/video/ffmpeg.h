@@ -28,6 +28,7 @@ public:
     virtual QSize getDecoderMaxResolution() override;
     virtual int submitDecodeUnit(PDECODE_UNIT du) override;
     virtual void setVideoPaused(bool paused) override;
+    virtual void refreshStartupPreview() override;
     virtual void renderFrameOnMainThread() override;
     virtual void setHdrMode(bool enabled) override;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info) override;
@@ -136,6 +137,7 @@ private:
     SDL_Thread* m_DecoderThread;
     SDL_atomic_t m_DecoderThreadShouldQuit;
     VideoPauseState m_VideoPauseState;
+    uint64_t m_PreviewPacketSubmittedUs = 0;
 
     // Data buffers in the queued DU are not valid
     QQueue<DECODE_UNIT> m_FrameInfoQueue;
