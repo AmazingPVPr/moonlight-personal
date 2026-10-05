@@ -61,16 +61,79 @@ Views.SettingsView {
         control("saveProfileButton").clicked()
     }
 
+    function enterSeconds(spin, seconds) {
+        spin.contentItem.forceActiveFocus()
+        check(spin.contentItem.activeFocus, "Editable delay field must accept focus")
+        spin.contentItem.text = String(seconds)
+        control("profileSelector").forceActiveFocus()
+        check(spin.value === seconds, "Delay text must commit when focus leaves the field")
+    }
+
     function runChecks() {
         selectModelValue(control("windowModeComboBox"), null, StreamingPreferences.WM_FULLSCREEN)
         check(control("profileSelector").restoreUiNavMode, "Settings chooser must restore tab navigation")
         var compactSelector = findObject(compactProfileTest, "profileSelector", [])
         check(compactSelector && !compactSelector.restoreUiNavMode, "Toolbar chooser must restore grid navigation")
+        var delaySpin = control("unfocusedPauseDelaySpinBox")
+        check(delaySpin.value === 0, "Unfocused delay should default to immediate")
+        check(!delaySpin.enabled, "Unfocused delay control should start disabled")
         check(control("pauseHiddenCheck").checked, "Hidden pause should default on")
         check(!control("pauseUnfocusedCheck").checked, "Focus pause should default off")
         control("pauseUnfocusedCheck").toggle()
         control("pauseUnfocusedCheck").toggled()
         check(StreamingPreferences.pauseVideoWhenUnfocused, "Focus pause checkbox must update preferences")
+        check(delaySpin.enabled, "Enabling unfocused pause should enable the delay control")
+        delaySpin.value = 60
+        delaySpin.valueModified()
+        check(StreamingPreferences.unfocusedPauseDelaySeconds === 60, "Delay control must write seconds")
+        control("pauseUnfocusedCheck").toggle()
+        control("pauseUnfocusedCheck").toggled()
+        check(!delaySpin.enabled && StreamingPreferences.unfocusedPauseDelaySeconds === 60,
+              "Disabling focus pause should retain its delay")
+        control("pauseUnfocusedCheck").toggle()
+        control("pauseUnfocusedCheck").toggled()
+        enterSeconds(delaySpin, 3600)
+        check(StreamingPreferences.unfocusedPauseDelaySeconds === 3600,
+              "Typed maximum video delay must update preferences")
+        enterSeconds(delaySpin, 60)
+
+        var hiddenAudioDelay = control("hiddenAudioMuteDelaySpinBox")
+        var unfocusedAudioDelay = control("unfocusedAudioMuteDelaySpinBox")
+        check(hiddenAudioDelay.value === 0 && unfocusedAudioDelay.value === 0,
+              "Audio delays should default to immediate")
+        check(!hiddenAudioDelay.enabled && !unfocusedAudioDelay.enabled,
+              "Audio delay controls should start disabled")
+        check(!control("muteHiddenCheck").checked && !control("muteUnfocusedCheck").checked,
+              "Background audio mute should default off")
+        control("muteHiddenCheck").toggle()
+        control("muteHiddenCheck").toggled()
+        control("muteUnfocusedCheck").toggle()
+        control("muteUnfocusedCheck").toggled()
+        check(hiddenAudioDelay.enabled && unfocusedAudioDelay.enabled,
+              "Mute checkboxes should enable their independent delay controls")
+        enterSeconds(hiddenAudioDelay, 3600)
+        check(StreamingPreferences.hiddenAudioMuteDelaySeconds === 3600,
+              "Typed maximum hidden audio delay must update preferences")
+        enterSeconds(hiddenAudioDelay, 5)
+        enterSeconds(unfocusedAudioDelay, 3600)
+        check(StreamingPreferences.unfocusedAudioMuteDelaySeconds === 3600,
+              "Typed maximum unfocused audio delay must update preferences")
+        enterSeconds(unfocusedAudioDelay, 120)
+        check(StreamingPreferences.hiddenAudioMuteDelaySeconds === 5 &&
+              StreamingPreferences.unfocusedAudioMuteDelaySeconds === 120 &&
+              StreamingPreferences.unfocusedPauseDelaySeconds === 60,
+              "Each audio timer must write seconds without changing the other timers")
+        control("muteHiddenCheck").toggle()
+        control("muteHiddenCheck").toggled()
+        control("muteUnfocusedCheck").toggle()
+        control("muteUnfocusedCheck").toggled()
+        check(!hiddenAudioDelay.enabled && !unfocusedAudioDelay.enabled &&
+              hiddenAudioDelay.value === 5 && unfocusedAudioDelay.value === 120,
+              "Disabling audio muting should retain both delays")
+        control("muteHiddenCheck").toggle()
+        control("muteHiddenCheck").toggled()
+        control("muteUnfocusedCheck").toggle()
+        control("muteUnfocusedCheck").toggled()
 
         useNameDialog("create", "Gaming")
         check(StreamingPreferences.currentProfile === "Gaming", "New preset should select itself")
@@ -90,6 +153,8 @@ Views.SettingsView {
         check(StreamingPreferences.currentProfile === "Desktop", "Rename should preserve current selection")
         chooseProfile("Default")
         check(StreamingPreferences.width === 1920 && StreamingPreferences.fps === 60, "Default should restore global settings")
+        check(StreamingPreferences.unfocusedPauseDelaySeconds === 60 && delaySpin.value === 60,
+              "Unfocused delay must stay global when selecting Default")
         chooseProfile("Gaming")
         check(StreamingPreferences.width === 1600 && StreamingPreferences.height === 900 && StreamingPreferences.fps === 90, "Preset mode should survive UI refresh")
         check(StreamingPreferences.bitrateKbps === 42000 && !StreamingPreferences.autoAdjustBitrate, "Preset bitrate must not be reset by controls")
@@ -113,6 +178,12 @@ Views.SettingsView {
         check(StreamingPreferences.profileNames.indexOf("Gaming") < 0, "Deleted preset must disappear")
         chooseProfile("Desktop")
         check(StreamingPreferences.currentProfile === "Desktop" && StreamingPreferences.bitrateKbps === 42000, "Duplicate must remain independent")
+        check(StreamingPreferences.unfocusedPauseDelaySeconds === 60 && delaySpin.value === 60,
+              "Unfocused delay must survive profile changes")
+        check(StreamingPreferences.muteAudioWhenHidden && hiddenAudioDelay.value === 5 &&
+              StreamingPreferences.hiddenAudioMuteDelaySeconds === 5 &&
+              unfocusedAudioDelay.value === 120 && StreamingPreferences.unfocusedAudioMuteDelaySeconds === 120,
+              "New audio controls and timers must stay global across profile changes")
         if (showDialogForScreenshot) {
             control("profileNameDialog").start("create")
             control("profileNameField").text = "Living room"
@@ -124,7 +195,7 @@ Views.SettingsView {
             // renderer. Preserve modal geometry without that effect for QA.
             screenshotDialog.Material.elevation = 0
         }
-        console.log("UI TEST PASS: preset dialogs, switching, custom modes, bitrate preservation, and pause controls")
+        console.log("UI TEST PASS: presets, custom modes, bitrate preservation, and independent video and audio delays")
         checksFinished = true
     }
 
