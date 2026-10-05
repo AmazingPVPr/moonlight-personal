@@ -22,6 +22,12 @@ bash tests/video-pause/run.sh
 
 The test runs the production frame pacer, validates AVFrame release, checks both rendering modes, drains 1,000 paused submissions, rejects stale wakeups, and performs 100 rapid pause/resume/shutdown cycles. It also checks keyframe recovery and fast away/back transitions. These tests do not emulate a complete GameStream host.
 
+```sh
+bash tests/video-pause/run-startup-vulkan.sh
+```
+
+This Linux smoke test needs access to an X11/XWayland display and a Vulkan driver. It uses the production Vulkan renderer to present an initial black buffer to a hidden test window, then checks that a paused production pacer renders no video. It never connects to a host or takes window focus. Exit code 77 means the graphical environment is unavailable, not a passing test.
+
 ## Desktop visibility
 
 ```sh
@@ -49,5 +55,8 @@ Compile with `CONFIG+=ui-test`. Set `QT_QPA_PLATFORM=offscreen`, `QT_QUICK_BACKE
 4. Repeat with minimize/restore. Enable unfocused pausing, focus another window on the same desktop, and verify the independent option.
 5. Repeat rapid switches and quit while paused. Check the temporary KWin script is removed after stream exit.
 6. Disable the options and confirm the previous continuous playback behavior.
+7. With unfocused pausing enabled before launch, verify the stream window appears immediately, then focus it and confirm video resumes. Repeat while the stream starts in the background, including with the Vulkan renderer.
 
-Network traffic and host encoding are expected to continue during local pause. Audio follows the separate mute setting. This checklist is still pending on the user's real host; automated test results should not be described as a measured performance reduction or a verified live connection.
+The initial build was checked against the user's Windows host on 2026-10-05. The user confirmed video resumes after returning to its virtual desktop. While away, the client logged local video pause, retained three streaming UDP sockets, used about 0.5% CPU over a two-second sample, and reported 0% GPU decoder activity in three samples. These are spot checks, not a full performance comparison. The same run exposed a Vulkan startup issue with unfocused pausing; repeat the startup and desktop checks after applying the fix.
+
+Network traffic and host encoding are expected to continue during local pause. Audio follows the separate mute setting. The rest of the live checklist remains pending; automated tests alone should not be described as measured performance savings.
