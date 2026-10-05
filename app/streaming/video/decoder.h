@@ -6,6 +6,7 @@
 
 #define SDL_CODE_FRAME_READY 0
 #define SDL_CODE_STARTUP_PREVIEW_PRESENTED 1
+#define SDL_CODE_STARTUP_PREVIEW_STARTED 2
 
 #define MAX_SLICES 4
 
@@ -81,6 +82,8 @@ public:
     virtual int submitDecodeUnit(PDECODE_UNIT du) = 0;
     virtual void setVideoPaused(bool) {}
     virtual void refreshStartupPreview() {}
+    virtual void tickVideoPause() {}
+    virtual uint32_t videoPauseWaitTimeout(uint32_t maxMs) { return maxMs; }
     virtual void renderFrameOnMainThread() = 0;
     virtual void setHdrMode(bool enabled) = 0;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info) = 0;
