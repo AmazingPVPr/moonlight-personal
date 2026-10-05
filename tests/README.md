@@ -1,4 +1,4 @@
-# Personal fork validation
+# Moonshine Client validation
 
 Run tests from separate build directories so generated files stay out of source control. Qt 6 is used below; the profiles test also passes with Qt 5.
 
@@ -12,7 +12,7 @@ make -j4
 ./profile-tests
 ```
 
-The tests exercise a real writer/reader process restart, per-host profile selections, fallback, duplication, rename/delete references, global settings, atomic preference updates, and session snapshot independence.
+The tests exercise a real writer/reader process restart, per-host profile selections, fallback, duplication, rename/delete references, global settings, atomic preference updates, and session snapshot independence. They also cover independent video/audio delays, bounds, and typed legacy settings migration without overwriting existing settings. There are 28 passing cases on both Qt 5 and Qt 6.
 
 ## Video pause and render queues
 
@@ -20,13 +20,20 @@ The tests exercise a real writer/reader process restart, per-host profile select
 bash tests/video-pause/run.sh
 ```
 
-The test runs the production frame pacer, validates AVFrame release, checks both rendering modes, drains 1,000 paused submissions, rejects stale wakeups, and performs 100 rapid pause/resume/shutdown cycles. It also checks keyframe recovery and fast away/back transitions. These tests do not emulate a complete GameStream host.
+The test runs the production frame pacer, validates AVFrame release, checks both rendering modes, drains 1,000 paused submissions, rejects stale wakeups, and performs 100 rapid pause/resume/shutdown cycles. It also checks keyframe recovery, a bounded first-frame preview, failed presentation, decoder generations, and independent monotonic focus/visibility timers. These tests do not emulate a complete GameStream host.
 
 ```sh
 bash tests/video-pause/run-startup-vulkan.sh
 ```
 
-This Linux smoke test needs access to an X11/XWayland display and a Vulkan driver. It uses the production Vulkan renderer to present an initial black buffer to a hidden test window, then checks that a paused production pacer renders no video. It never connects to a host or takes window focus. Exit code 77 means the graphical environment is unavailable, not a passing test.
+This Linux smoke test needs access to an X11/XWayland display and a Vulkan driver. It uses the production Vulkan renderer and pacer: the initial black buffer does not complete the preview, one synthetic video frame does, and 100 further frames are discarded while paused. It never connects to a host or takes window focus. Exit code 77 means the graphical environment is unavailable, not a passing test.
+
+```sh
+bash tests/video-pause/run-renderer-presentation.sh
+bash tests/video-pause/run-sdl-presentation.sh
+```
+
+These tests exercise actual Vulkan and SDL presentation success/failure. Linux renderer changes were compiled on this client. Windows and macOS presentation hooks were reviewed but have not been compiled or tested on those platforms.
 
 ## Desktop visibility
 
@@ -45,18 +52,20 @@ The X11 helper was also checked on this client's XWayland server using an unmapp
 
 ## Actual settings screen
 
-Compile with `CONFIG+=ui-test`. Set `QT_QPA_PLATFORM=offscreen`, `QT_QUICK_BACKEND=software`, and fresh temporary `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` directories for each run. Set `MOONLIGHT_UI_TEST_VIEW` to the absolute `file:///.../tests/ui/smoke.qml` URL and run the client. Optionally set `MOONLIGHT_UI_TEST_SCREENSHOT` to a PNG path. The test exercises the actual preset dialogs and settings controls, then exits. `tests/ui/dialog.qml` keeps a modal open for visual checks; this test disables its elevation effect because the software backend cannot draw that shader. The test view and screenshot environment variables are only honored in this explicit test build.
+Compile with `CONFIG+=ui-test`. Set `QT_QPA_PLATFORM=offscreen`, `QT_QUICK_BACKEND=software`, and fresh temporary `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` directories for each run. Set `MOONLIGHT_UI_TEST_VIEW` to the absolute `file:///.../tests/ui/smoke.qml` URL and run the client. Optionally set `MOONLIGHT_UI_TEST_SCREENSHOT` to a PNG path. The test exercises the actual preset dialogs and settings controls, including mixed video/audio delays and retained disabled values, then exits. `tests/ui/dialog.qml` keeps a modal open for visual checks; this test disables its elevation effect because the software backend cannot draw that shader. The test view and screenshot environment variables are only honored in this explicit test build. Ship with `CONFIG-=ui-test` and rebuild `main.o` after changing this flag.
 
 ## Live Windows-host check
 
-1. End the old client's stream when convenient, then start Moonlight Personal and pair with the host.
+1. End the old client's stream when convenient, then start Moonshine Client. Existing pairing and presets should be retained after settings migration.
 2. Choose a windowed preset and start the host's Desktop application. Verify normal video, audio, and input.
 3. Switch virtual desktops for at least 30 seconds. Check that GPU decoder use falls and the connection stays alive. Return and verify fresh video resumes without reconnecting or a black screen.
 4. Repeat with minimize/restore. Enable unfocused pausing, focus another window on the same desktop, and verify the independent option.
 5. Repeat rapid switches and quit while paused. Check the temporary KWin script is removed after stream exit.
 6. Disable the options and confirm the previous continuous playback behavior.
 7. With unfocused pausing enabled before launch, verify the stream window appears immediately, then focus it and confirm video resumes. Repeat while the stream starts in the background, including with the Vulkan renderer.
+8. Start unfocused and verify one actual frame appears before video pauses. Set the video delay to 60 seconds and check focus restores/cancels the countdown.
+9. Enable audio mute independently of video. Test different audio focus/hidden delays, both together, and audio-only background controls.
 
-The initial build was checked against the user's Windows host on 2026-10-05. The user confirmed video resumes after returning to its virtual desktop. While away, the client logged local video pause, retained three streaming UDP sockets, used about 0.5% CPU over a two-second sample, and reported 0% GPU decoder activity in three samples. These are spot checks, not a full performance comparison. The same run exposed a Vulkan startup issue with unfocused pausing; repeat the startup and desktop checks after applying the fix.
+The initial build was checked against the user's Windows host on 2026-10-05. The user confirmed video resumes after returning to its virtual desktop. While away, the client logged local video pause, retained three streaming UDP sockets, used about 0.5% CPU over a two-second sample, and reported 0% GPU decoder activity in three samples. These are spot checks, not a full performance comparison. The initial Vulkan startup issue was fixed and the user confirmed unfocused pause works with the visible window. A later same-desktop spot check again logged video pause, retained three streaming sockets, and used about 0.5% CPU; GPU counters were unavailable in that check. The subsequent actual first-frame preview and independent timers pass automated tests but still need a complete live host check.
 
 Network traffic and host encoding are expected to continue during local pause. Audio follows the separate mute setting. The rest of the live checklist remains pending; automated tests alone should not be described as measured performance savings.
