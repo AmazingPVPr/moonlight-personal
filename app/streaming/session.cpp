@@ -2,6 +2,7 @@
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
 #include "backend/richpresencemanager.h"
+#include "desktopvisibility.h"
 
 #include <Limelight.h>
 #include "SDL_compat.h"
@@ -28,6 +29,7 @@
 #define SDL_CODE_GAMECONTROLLER_SET_MOTION_EVENT_STATE 103
 #define SDL_CODE_GAMECONTROLLER_SET_CONTROLLER_LED 104
 #define SDL_CODE_GAMECONTROLLER_SET_ADAPTIVE_TRIGGERS 105
+#define SDL_CODE_DESKTOP_VISIBILITY_CHANGED 106
 
 #include <openssl/rand.h>
 
@@ -359,6 +361,15 @@ int Session::drSetup(int videoFormat, int width, int height, int frameRate, void
 
 int Session::drSubmitDecodeUnit(PDECODE_UNIT du)
 {
+    if (s_ActiveSession->m_VideoPaused.load()) {
+        return DR_OK;
+    }
+    if (s_ActiveSession->m_PushDecoderNeedsKeyframe.load()) {
+        if (du->frameType != FRAME_TYPE_IDR) {
+            return DR_OK;
+        }
+        s_ActiveSession->m_PushDecoderNeedsKeyframe.store(false);
+    }
     // Use a lock since we'll be yanking this decoder out
     // from underneath the session when we initiate destruction.
     // We need to destroy the decoder on the main thread to satisfy
@@ -565,7 +576,7 @@ bool Session::populateDecoderProperties(SDL_Window* window)
 }
 
 Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *preferences)
-    : m_Preferences(preferences ? preferences : StreamingPreferences::get()),
+    : m_Preferences((preferences ? preferences : StreamingPreferences::get())->createSessionSnapshot()),
       m_IsFullScreen(m_Preferences->windowMode != StreamingPreferences::WM_WINDOWED || !WMUtils::isRunningDesktopEnvironment()),
       m_Computer(computer),
       m_App(app),
@@ -594,6 +605,7 @@ Session::~Session()
     // Use Session::exec() or DeferredSessionCleanupTask instead.
 
     SDL_DestroyMutex(m_DecoderLock);
+    delete m_Preferences;
 }
 
 bool Session::initialize(QQuickWindow* qtWindow)
@@ -1777,6 +1789,43 @@ void Session::interrupt()
     SDL_PushEvent(&event);
 }
 
+void Session::setDesktopVisible(bool visible)
+{
+    if (m_DesktopVisible.exchange(visible) == visible) {
+        return;
+    }
+    SDL_Event event = {};
+    event.type = SDL_USEREVENT;
+    event.user.code = SDL_CODE_DESKTOP_VISIBILITY_CHANGED;
+    SDL_PushEvent(&event);
+}
+
+void Session::updateVideoPause()
+{
+    bool paused = (m_Preferences->pauseVideoWhenHidden &&
+                   (m_WindowHidden || m_WindowMinimized || !m_DesktopVisible.load())) ||
+                  (m_Preferences->pauseVideoWhenUnfocused && !m_WindowFocused);
+    if (m_VideoPaused.exchange(paused) == paused) {
+        return;
+    }
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Video %s locally; streaming connection remains active",
+                paused ? "paused" : "resuming");
+    SDL_LockMutex(m_DecoderLock);
+    if (m_VideoDecoder != nullptr) {
+        m_VideoDecoder->setVideoPaused(paused);
+    }
+    SDL_UnlockMutex(m_DecoderLock);
+
+    if (!(m_VideoCallbacks.capabilities & CAPABILITY_PULL_RENDERER)) {
+        m_PushDecoderNeedsKeyframe.store(true);
+        if (!paused) {
+            LiRequestIdrFrame();
+        }
+    }
+}
+
 void Session::exec()
 {
     // If the connection failed, clean up and abort the connection.
@@ -1843,7 +1892,7 @@ void Session::exec()
 #ifdef Q_OS_DARWIN
     std::string windowName = QString(m_Computer->name).toStdString();
 #else
-    std::string windowName = QString(m_Computer->name + " - Moonlight").toStdString();
+    std::string windowName = QString(m_Computer->name + " - Moonlight Personal").toStdString();
 #endif
 
     m_Window = SDL_CreateWindow(windowName.c_str(),
@@ -1877,6 +1926,17 @@ void Session::exec()
     }
 
     m_InputHandler->setWindow(m_Window);
+    Uint32 initialWindowFlags = SDL_GetWindowFlags(m_Window);
+    m_WindowHidden = initialWindowFlags & SDL_WINDOW_HIDDEN;
+    m_WindowMinimized = initialWindowFlags & SDL_WINDOW_MINIMIZED;
+    m_WindowFocused = initialWindowFlags & SDL_WINDOW_INPUT_FOCUS;
+    updateVideoPause();
+
+    DesktopVisibility desktopVisibility;
+    if (m_Preferences->pauseVideoWhenHidden) {
+        QObject::connect(&desktopVisibility, &DesktopVisibility::desktopVisibleChanged,
+                         this, &Session::setDesktopVisible, Qt::DirectConnection);
+    }
 
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
     QImage svgImage(ICON_SIZE, ICON_SIZE, QImage::Format_RGBA8888);
@@ -2008,6 +2068,9 @@ void Session::exec()
                     m_VideoDecoder->renderFrameOnMainThread();
                 }
                 break;
+            case SDL_CODE_DESKTOP_VISIBILITY_CHANGED:
+                updateVideoPause();
+                break;
             case SDL_CODE_FLUSH_WINDOW_EVENT_BARRIER:
                 m_FlushingWindowEventsRef--;
                 break;
@@ -2045,21 +2108,38 @@ void Session::exec()
             // Early handling of some events
             switch (event.window.event) {
             case SDL_WINDOWEVENT_FOCUS_LOST:
+                m_WindowFocused = false;
                 if (m_Preferences->muteOnFocusLoss) {
                     m_AudioMuted = true;
                 }
                 m_InputHandler->notifyFocusLost();
                 break;
             case SDL_WINDOWEVENT_FOCUS_GAINED:
+                m_WindowFocused = true;
                 if (m_Preferences->muteOnFocusLoss) {
                     m_AudioMuted = false;
                 }
                 m_InputHandler->notifyFocusGained();
                 break;
+            case SDL_WINDOWEVENT_HIDDEN:
+                m_WindowHidden = true;
+                break;
+            case SDL_WINDOWEVENT_SHOWN:
+                m_WindowHidden = false;
+                break;
+            case SDL_WINDOWEVENT_MINIMIZED:
+                m_WindowMinimized = true;
+                break;
+            case SDL_WINDOWEVENT_RESTORED:
+            case SDL_WINDOWEVENT_MAXIMIZED:
+                m_WindowMinimized = false;
+                break;
             case SDL_WINDOWEVENT_LEAVE:
                 m_InputHandler->notifyMouseLeave();
                 break;
             }
+
+            updateVideoPause();
 
             presence.runCallbacks();
 
@@ -2170,6 +2250,11 @@ void Session::exec()
                             event.type);
             }
 
+            // SDL renderer initialization can replace the native window.
+            // Stop reads of its old X11 handle before any recreation, then
+            // capture the final handle after the new decoder is initialized.
+            desktopVisibility.stopMonitoring();
+
             SDL_LockMutex(m_DecoderLock);
 
             // Destroy the old decoder
@@ -2233,6 +2318,7 @@ void Session::exec()
             }
 
             // Request an IDR frame to complete the reset
+            m_VideoDecoder->setVideoPaused(m_VideoPaused.load());
             LiRequestIdrFrame();
 
             // Set HDR mode. We may miss the callback if we're in the middle
@@ -2243,6 +2329,9 @@ void Session::exec()
             m_InputHandler->updatePointerRegionLock();
 
             SDL_UnlockMutex(m_DecoderLock);
+            if (m_Preferences->pauseVideoWhenHidden) {
+                desktopVisibility.startMonitoring(m_Window);
+            }
             break;
 
         case SDL_KEYUP:
@@ -2308,6 +2397,9 @@ void Session::exec()
     }
 
 DispatchDeferredCleanup:
+    // Stop the monitor while its SDL window and Session callback are valid.
+    desktopVisibility.stopMonitoring();
+
     // Switch back to synchronous logging mode
     StreamUtils::exitAsyncLoggingMode();
 

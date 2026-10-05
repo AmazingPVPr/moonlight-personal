@@ -2,6 +2,7 @@
 
 #include <QSemaphore>
 #include <QQuickWindow>
+#include <atomic>
 
 #include <Limelight.h>
 #include <opus_multistream.h>
@@ -125,6 +126,11 @@ public:
 
     void setShouldExit(bool quitHostApp = false);
 
+public slots:
+    // Thread-safe: native desktop monitors may run outside Qt's main loop,
+    // which is suspended while Session::exec() processes SDL events.
+    void setDesktopVisible(bool visible);
+
 signals:
     void stageStarting(QString stage);
 
@@ -145,6 +151,7 @@ signals:
 
 private:
     void exec();
+    void updateVideoPause();
 
     bool startConnectionAsync();
 
@@ -264,6 +271,12 @@ private:
     int m_FlushingWindowEventsRef;
     QStringList m_LaunchWarnings;
     bool m_ShouldExit;
+    std::atomic<bool> m_DesktopVisible{true};
+    std::atomic<bool> m_VideoPaused{false};
+    std::atomic<bool> m_PushDecoderNeedsKeyframe{false};
+    bool m_WindowHidden = false;
+    bool m_WindowMinimized = false;
+    bool m_WindowFocused = true;
 
     bool m_AsyncConnectionSuccess;
     int m_PortTestResults;
