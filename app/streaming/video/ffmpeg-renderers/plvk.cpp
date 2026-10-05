@@ -946,6 +946,33 @@ void PlVkRenderer::waitToRender()
     }
 }
 
+void PlVkRenderer::prepareToRender()
+{
+    // A Wayland surface needs a first presented buffer before it can map and
+    // receive keyboard focus. Present black even when video starts paused,
+    // just as the SDL/EGL renderers do, so focus pausing cannot prevent mapping.
+    // FFmpeg invokes this before starting the Pacer's render thread.
+    waitToRender();
+    if (!m_HasPendingSwapchainFrame) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Unable to acquire the initial Vulkan window buffer");
+        return;
+    }
+
+    const float black[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    pl_tex_clear(m_Vulkan->gpu, m_SwapchainFrame.fbo, black);
+    const bool presented = pl_swapchain_submit_frame(m_Swapchain);
+    m_HasPendingSwapchainFrame = false;
+    if (!presented) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Unable to present the initial Vulkan window buffer");
+    }
+    else {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Initial Vulkan window buffer presented before video decoding");
+    }
+}
+
 void PlVkRenderer::cleanupRenderContext()
 {
     // We have to submit a pending swapchain frame before shutting down
