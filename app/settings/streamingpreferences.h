@@ -172,6 +172,10 @@ public:
     Q_PROPERTY(bool swapMouseButtons MEMBER swapMouseButtons NOTIFY mouseButtonsChanged)
     Q_PROPERTY(bool pauseVideoWhenHidden MEMBER pauseVideoWhenHidden NOTIFY pauseVideoWhenHiddenChanged)
     Q_PROPERTY(bool pauseVideoWhenUnfocused MEMBER pauseVideoWhenUnfocused NOTIFY pauseVideoWhenUnfocusedChanged)
+    Q_PROPERTY(int unfocusedPauseDelaySeconds READ getUnfocusedPauseDelaySeconds WRITE setUnfocusedPauseDelaySeconds NOTIFY unfocusedPauseDelaySecondsChanged)
+    Q_PROPERTY(bool muteAudioWhenHidden MEMBER muteAudioWhenHidden NOTIFY muteAudioWhenHiddenChanged)
+    Q_PROPERTY(int unfocusedAudioMuteDelaySeconds READ getUnfocusedAudioMuteDelaySeconds WRITE setUnfocusedAudioMuteDelaySeconds NOTIFY unfocusedAudioMuteDelaySecondsChanged)
+    Q_PROPERTY(int hiddenAudioMuteDelaySeconds READ getHiddenAudioMuteDelaySeconds WRITE setHiddenAudioMuteDelaySeconds NOTIFY hiddenAudioMuteDelaySecondsChanged)
     Q_PROPERTY(bool muteOnFocusLoss MEMBER muteOnFocusLoss NOTIFY muteOnFocusLossChanged)
     Q_PROPERTY(bool backgroundGamepad MEMBER backgroundGamepad NOTIFY backgroundGamepadChanged)
     Q_PROPERTY(bool reverseScrollDirection MEMBER reverseScrollDirection NOTIFY reverseScrollDirectionChanged)
@@ -179,6 +183,13 @@ public:
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
+
+    int getUnfocusedPauseDelaySeconds() const;
+    void setUnfocusedPauseDelaySeconds(int seconds);
+    int getUnfocusedAudioMuteDelaySeconds() const;
+    void setUnfocusedAudioMuteDelaySeconds(int seconds);
+    int getHiddenAudioMuteDelaySeconds() const;
+    void setHiddenAudioMuteDelaySeconds(int seconds);
 
     Q_INVOKABLE bool retranslate();
 
@@ -208,6 +219,10 @@ public:
     bool muteOnFocusLoss;
     bool pauseVideoWhenHidden;
     bool pauseVideoWhenUnfocused;
+    int unfocusedPauseDelaySeconds = 0;
+    bool muteAudioWhenHidden;
+    int unfocusedAudioMuteDelaySeconds = 0;
+    int hiddenAudioMuteDelaySeconds = 0;
     bool backgroundGamepad;
     bool reverseScrollDirection;
     bool swapFaceButtons;
@@ -257,6 +272,10 @@ signals:
     void muteOnFocusLossChanged();
     void pauseVideoWhenHiddenChanged();
     void pauseVideoWhenUnfocusedChanged();
+    void unfocusedPauseDelaySecondsChanged();
+    void muteAudioWhenHiddenChanged();
+    void unfocusedAudioMuteDelaySecondsChanged();
+    void hiddenAudioMuteDelaySecondsChanged();
     void profileNamesChanged();
     void currentProfileChanged();
     void backgroundGamepadChanged();

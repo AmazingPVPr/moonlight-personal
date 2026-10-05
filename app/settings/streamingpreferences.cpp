@@ -54,6 +54,10 @@
 #define SER_RENDERER "renderer"
 #define SER_PAUSEHIDDEN "pausevideowhenhidden"
 #define SER_PAUSEUNFOCUSED "pausevideowhenunfocused"
+#define SER_UNFOCUSEDPAUSEDELAY "unfocusedpausedelayseconds"
+#define SER_MUTEAUDIOHIDDEN "muteaudiowhenhidden"
+#define SER_UNFOCUSEDAUDIOMUTEDELAY "unfocusedaudiomutedelayseconds"
+#define SER_HIDDENAUDIOMUTEDELAY "hiddenaudiomutedelayseconds"
 
 // Only settings that control a stream belong to presets. Discovery, application
 // language/window state, diagnostics and the background pause policy stay global.
@@ -187,6 +191,10 @@ void StreamingPreferences::reload()
     muteOnFocusLoss = settings.value(SER_MUTEONFOCUSLOSS, false).toBool();
     pauseVideoWhenHidden = settings.value(SER_PAUSEHIDDEN, true).toBool();
     pauseVideoWhenUnfocused = settings.value(SER_PAUSEUNFOCUSED, false).toBool();
+    unfocusedPauseDelaySeconds = qBound(0, settings.value(SER_UNFOCUSEDPAUSEDELAY, 0).toInt(), 3600);
+    muteAudioWhenHidden = settings.value(SER_MUTEAUDIOHIDDEN, false).toBool();
+    unfocusedAudioMuteDelaySeconds = qBound(0, settings.value(SER_UNFOCUSEDAUDIOMUTEDELAY, 0).toInt(), 3600);
+    hiddenAudioMuteDelaySeconds = qBound(0, settings.value(SER_HIDDENAUDIOMUTEDELAY, 0).toInt(), 3600);
     backgroundGamepad = settings.value(SER_BACKGROUNDGAMEPAD, false).toBool();
     reverseScrollDirection = settings.value(SER_REVERSESCROLL, false).toBool();
     swapFaceButtons = settings.value(SER_SWAPFACEBUTTONS, false).toBool();
@@ -374,6 +382,9 @@ QString StreamingPreferences::getSuffixFromLanguage(StreamingPreferences::Langua
 
 void StreamingPreferences::save()
 {
+    setUnfocusedPauseDelaySeconds(unfocusedPauseDelaySeconds);
+    setUnfocusedAudioMuteDelaySeconds(unfocusedAudioMuteDelaySeconds);
+    setHiddenAudioMuteDelaySeconds(hiddenAudioMuteDelaySeconds);
     rememberCurrentStreamSettings();
     QSettings settings;
 
@@ -390,7 +401,53 @@ void StreamingPreferences::save()
     settings.setValue(SER_DEFAULTVER, CURRENT_DEFAULT_VER);
     settings.setValue(SER_PAUSEHIDDEN, pauseVideoWhenHidden);
     settings.setValue(SER_PAUSEUNFOCUSED, pauseVideoWhenUnfocused);
+    settings.setValue(SER_UNFOCUSEDPAUSEDELAY, unfocusedPauseDelaySeconds);
+    settings.setValue(SER_MUTEAUDIOHIDDEN, muteAudioWhenHidden);
+    settings.setValue(SER_UNFOCUSEDAUDIOMUTEDELAY, unfocusedAudioMuteDelaySeconds);
+    settings.setValue(SER_HIDDENAUDIOMUTEDELAY, hiddenAudioMuteDelaySeconds);
     saveProfiles(settings);
+}
+
+int StreamingPreferences::getUnfocusedPauseDelaySeconds() const
+{
+    return unfocusedPauseDelaySeconds;
+}
+
+void StreamingPreferences::setUnfocusedPauseDelaySeconds(int seconds)
+{
+    const int clampedSeconds = qBound(0, seconds, 3600);
+    if (unfocusedPauseDelaySeconds != clampedSeconds) {
+        unfocusedPauseDelaySeconds = clampedSeconds;
+        emit unfocusedPauseDelaySecondsChanged();
+    }
+}
+
+int StreamingPreferences::getUnfocusedAudioMuteDelaySeconds() const
+{
+    return unfocusedAudioMuteDelaySeconds;
+}
+
+void StreamingPreferences::setUnfocusedAudioMuteDelaySeconds(int seconds)
+{
+    const int clampedSeconds = qBound(0, seconds, 3600);
+    if (unfocusedAudioMuteDelaySeconds != clampedSeconds) {
+        unfocusedAudioMuteDelaySeconds = clampedSeconds;
+        emit unfocusedAudioMuteDelaySecondsChanged();
+    }
+}
+
+int StreamingPreferences::getHiddenAudioMuteDelaySeconds() const
+{
+    return hiddenAudioMuteDelaySeconds;
+}
+
+void StreamingPreferences::setHiddenAudioMuteDelaySeconds(int seconds)
+{
+    const int clampedSeconds = qBound(0, seconds, 3600);
+    if (hiddenAudioMuteDelaySeconds != clampedSeconds) {
+        hiddenAudioMuteDelaySeconds = clampedSeconds;
+        emit hiddenAudioMuteDelaySecondsChanged();
+    }
 }
 
 QVariantMap StreamingPreferences::captureStreamSettings() const
@@ -614,6 +671,10 @@ StreamingPreferences* StreamingPreferences::createSessionSnapshot() const
     snapshot->language = language;
     snapshot->pauseVideoWhenHidden = pauseVideoWhenHidden;
     snapshot->pauseVideoWhenUnfocused = pauseVideoWhenUnfocused;
+    snapshot->unfocusedPauseDelaySeconds = qBound(0, unfocusedPauseDelaySeconds, 3600);
+    snapshot->muteAudioWhenHidden = muteAudioWhenHidden;
+    snapshot->unfocusedAudioMuteDelaySeconds = qBound(0, unfocusedAudioMuteDelaySeconds, 3600);
+    snapshot->hiddenAudioMuteDelaySeconds = qBound(0, hiddenAudioMuteDelaySeconds, 3600);
     return snapshot;
 }
 
