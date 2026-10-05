@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=Moonlight Personal
-Comment=Stream from your PC with saved presets and automatic background video pausing
-Exec=moonlight-personal
-Icon=moonlight
-Terminal=false
-Type=Application
-Categories=Qt;Game;Network;RemoteAccess;
-Keywords=moonlight;stream;sunshine;remote play;
