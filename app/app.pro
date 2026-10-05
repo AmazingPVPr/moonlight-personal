@@ -3,15 +3,16 @@ CONFIG += c++17
 ui-test: DEFINES += MOONLIGHT_UI_TEST
 
 unix:!macx {
-    TARGET = moonlight-personal
+    TARGET = moonshine-client
 } else {
     # On macOS, this is the name displayed in the global menu bar
-    TARGET = MoonlightPersonal
+    TARGET = MoonshineClient
 }
 
 linux: QT += dbus
 SOURCES += streaming/desktopvisibility.cpp
-HEADERS += streaming/desktopvisibility.h streaming/desktopvisibility-x11.h streaming/video/pausestate.h
+HEADERS += streaming/desktopvisibility.h streaming/desktopvisibility-x11.h streaming/video/pausestate.h streaming/video/pausepolicy.h
+HEADERS += settings/settingsmigration.h
 RESOURCES += streaming/desktopvisibility.qrc
 
 include(../globaldefs.pri)
@@ -539,19 +540,19 @@ unix:!macx: {
 
     target.path = $$PREFIX/$$BINDIR/
 
-    desktop.files = deploy/linux/com.amazingpvpr.MoonlightPersonal.desktop
+    desktop.files = deploy/linux/com.amazingpvpr.MoonshineClient.desktop
     desktop.path = $$PREFIX/$$DATADIR/applications/
 
-    icons.files = res/moonlight.svg
-    icons.path = $$PREFIX/$$DATADIR/icons/hicolor/scalable/apps/
+    icons.files = res/moonshine-client.png
+    icons.path = $$PREFIX/$$DATADIR/icons/hicolor/512x512/apps/
 
     INSTALLS += target desktop icons
 }
 win32 {
     RC_ICONS = moonlight.ico
     QMAKE_TARGET_COMPANY = Moonlight Game Streaming Project
-    QMAKE_TARGET_DESCRIPTION = Moonlight Personal Streaming Client
-    QMAKE_TARGET_PRODUCT = Moonlight Personal
+    QMAKE_TARGET_DESCRIPTION = Moonshine Client Streaming Client
+    QMAKE_TARGET_PRODUCT = Moonshine Client
 
     CONFIG -= embed_manifest_exe
     QMAKE_LFLAGS += /MANIFEST:embed /MANIFESTINPUT:$${PWD}/Moonlight.exe.manifest

@@ -58,6 +58,7 @@
 #include "backend/systemproperties.h"
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
+#include "settings/settingsmigration.h"
 #include "gui/sdlgamepadkeynavigation.h"
 
 #if defined(Q_OS_WIN32)
@@ -435,7 +436,7 @@ int main(int argc, char *argv[])
     // it is critical that these be called before Path::initialize().
     QCoreApplication::setOrganizationName("Moonlight Game Streaming Project");
     QCoreApplication::setOrganizationDomain("moonlight-stream.com");
-    QCoreApplication::setApplicationName("Moonlight Personal");
+    QCoreApplication::setApplicationName("Moonshine Client");
 
     if (QFile(QDir::currentPath() + "/portable.dat").exists()) {
         QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -448,6 +449,10 @@ int main(int argc, char *argv[])
     else {
         // Initialize paths for standard installation
         Path::initialize(false);
+    }
+
+    if (SettingsMigration::importLegacyPreferencesIfEmpty(QStringLiteral("Moonlight Personal"))) {
+        qInfo() << "Imported Moonlight Personal preferences and pairing identity";
     }
 
     // Override the default QML cache directory with the one we chose
@@ -720,8 +725,8 @@ int main(int argc, char *argv[])
     // Set our app name for SDL to use with PulseAudio and PipeWire. This matches what we
     // provide as our app name to libsoundio too. On SDL 2.0.18+, SDL_APP_NAME is also used
     // for screensaver inhibitor reporting.
-    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_APP_NAME, "Moonlight Personal");
-    SDL_SetHint(SDL_HINT_APP_NAME, "Moonlight Personal");
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_APP_NAME, "Moonshine Client");
+    SDL_SetHint(SDL_HINT_APP_NAME, "Moonshine Client");
 
     // SDL will try to lock the mouse cursor on Wayland if it's not visible in order to
     // support applications that assume they can warp the cursor (which isn't possible
@@ -759,7 +764,7 @@ int main(int argc, char *argv[])
     }
 
     QGuiApplication app(argc, argv);
-    app.setApplicationDisplayName("Moonlight Personal");
+    app.setApplicationDisplayName("Moonshine Client");
 
 #ifdef Q_OS_DARWIN
     // macOS defaults "Keyboard navigation" to text fields and lists only, which
@@ -928,13 +933,13 @@ int main(int argc, char *argv[])
 #ifndef Q_OS_DARWIN
     // Set the window icon except on macOS where we want to keep the
     // modified macOS 11 style rounded corner icon.
-    app.setWindowIcon(QIcon(":/res/moonlight.svg"));
+    app.setWindowIcon(QIcon(":/res/moonshine-client.png"));
 #endif
 
     // This is necessary to show our icon correctly on Wayland
-    app.setDesktopFileName("com.amazingpvpr.MoonlightPersonal");
-    qputenv("SDL_VIDEO_WAYLAND_WMCLASS", "com.amazingpvpr.MoonlightPersonal");
-    qputenv("SDL_VIDEO_X11_WMCLASS", "com.amazingpvpr.MoonlightPersonal");
+    app.setDesktopFileName("com.amazingpvpr.MoonshineClient");
+    qputenv("SDL_VIDEO_WAYLAND_WMCLASS", "com.amazingpvpr.MoonshineClient");
+    qputenv("SDL_VIDEO_X11_WMCLASS", "com.amazingpvpr.MoonshineClient");
 
     // Register our C++ types for QML
     qmlRegisterType<ComputerModel>("ComputerModel", 1, 0, "ComputerModel");
