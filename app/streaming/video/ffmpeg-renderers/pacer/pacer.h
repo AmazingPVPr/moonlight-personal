@@ -2,17 +2,20 @@
 
 #include "../../decoder.h"
 #include "../renderer.h"
+#include "../../pausestate.h"
 
 #include <QQueue>
 #include <QMutex>
 #include <QWaitCondition>
 #include <atomic>
+#include <functional>
 
 // The maximum number of frames pacer will ever hold is:
 // - 3 frames in the pacing queue
 // - 1 frame removed from the render queue in the process of rendering
 // - 1 frame for deferred free
-#define PACER_MAX_OUTSTANDING_FRAMES (3 + 1 + 1)
+// - 1 failed submission retained until another successful presentation
+#define PACER_MAX_OUTSTANDING_FRAMES (3 + 1 + 1 + 1)
 
 class IVsyncSource {
 public:
@@ -32,7 +35,9 @@ public:
 class Pacer
 {
 public:
-    Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats);
+    Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats,
+          VideoPauseState* previewState = nullptr,
+          std::function<void()> previewPresented = {});
 
     ~Pacer();
 
@@ -57,6 +62,7 @@ private:
     void renderFrame(AVFrame* frame, uint64_t generation);
 
     void dropFrameForEnqueue(QQueue<AVFrame*>& queue);
+    bool canRenderPreview() const;
 
     QQueue<AVFrame*> m_RenderQueue;
     QQueue<AVFrame*> m_PacingQueue;
@@ -69,9 +75,13 @@ private:
     SDL_Thread* m_RenderThread;
     SDL_Thread* m_VsyncThread;
     AVFrame* m_DeferredFreeFrame;
+    AVFrame* m_DeferredFailedFrame;
     std::atomic<bool> m_Stopping;
     std::atomic<bool> m_Paused{false};
     std::atomic<uint64_t> m_PauseGeneration{0};
+    VideoPauseState* m_PreviewState;
+    std::function<void()> m_PreviewPresented;
+    bool m_PreviewFrameQueued = false;
 
     IVsyncSource* m_VsyncSource;
     IFFmpegRenderer* m_VsyncRenderer;

@@ -19,7 +19,7 @@
 // must not exceed the number buffer pool size to avoid running the decoder
 // out of available decoding surfaces.
 #define MAX_QUEUED_FRAMES 3
-static_assert(PACER_MAX_OUTSTANDING_FRAMES == MAX_QUEUED_FRAMES + 2,
+static_assert(PACER_MAX_OUTSTANDING_FRAMES == MAX_QUEUED_FRAMES + 3,
               "PACER_MAX_OUTSTANDING_FRAMES and MAX_QUEUED_FRAMES must agree");
 
 // We may be woken up slightly late so don't go all the way
@@ -29,11 +29,15 @@ static_assert(PACER_MAX_OUTSTANDING_FRAMES == MAX_QUEUED_FRAMES + 2,
 // V-sync happens.
 #define TIMER_SLACK_MS 3
 
-Pacer::Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats) :
+Pacer::Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats,
+             VideoPauseState* previewState, std::function<void()> previewPresented) :
     m_RenderThread(nullptr),
     m_VsyncThread(nullptr),
     m_DeferredFreeFrame(nullptr),
+    m_DeferredFailedFrame(nullptr),
     m_Stopping(false),
+    m_PreviewState(previewState),
+    m_PreviewPresented(std::move(previewPresented)),
     m_VsyncSource(nullptr),
     m_VsyncRenderer(renderer),
     m_MaxVideoFps(0),
@@ -86,6 +90,7 @@ Pacer::~Pacer()
         av_frame_free(&frame);
     }
     av_frame_free(&m_DeferredFreeFrame);
+    av_frame_free(&m_DeferredFailedFrame);
 }
 
 void Pacer::renderOnMainThread()
@@ -129,6 +134,7 @@ void Pacer::setPaused(bool paused)
         }
         m_PacingQueueHistory.clear();
         m_RenderQueueHistory.clear();
+        m_PreviewFrameQueued = false;
     }
     m_FrameQueueLock.unlock();
     m_PacingQueueNotEmpty.wakeAll();
@@ -148,7 +154,8 @@ int Pacer::vsyncThread(void *context)
     bool async = me->m_VsyncSource->isAsync();
     while (!me->m_Stopping) {
         me->m_FrameQueueLock.lock();
-        while (me->m_Paused && !me->m_Stopping) {
+        while (me->m_Paused &&
+               (!me->canRenderPreview() || me->m_PacingQueue.isEmpty()) && !me->m_Stopping) {
             me->m_VsyncSignalled.wait(&me->m_FrameQueueLock);
         }
         me->m_FrameQueueLock.unlock();
@@ -248,7 +255,7 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
 
     m_FrameQueueLock.lock();
 
-    if (m_Paused) {
+    if (m_Paused && !canRenderPreview()) {
         m_FrameQueueLock.unlock();
         return;
     }
@@ -297,7 +304,7 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
             return;
         }
 
-        if (m_Stopping || m_Paused || m_PacingQueue.isEmpty()) {
+        if (m_Stopping || (m_Paused && !canRenderPreview()) || m_PacingQueue.isEmpty()) {
             m_FrameQueueLock.unlock();
             return;
         }
@@ -374,7 +381,7 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing)
 
 void Pacer::signalVsync()
 {
-    if (!m_Paused) {
+    if (!m_Paused || canRenderPreview()) {
         m_VsyncSignalled.wakeOne();
     }
 }
@@ -383,7 +390,7 @@ void Pacer::renderFrame(AVFrame* frame, uint64_t generation)
 {
     // A single render already in flight may finish during the transition.
     // No further queued frame should be presented while paused.
-    if (m_Paused || generation != m_PauseGeneration.load()) {
+    if ((m_Paused && !canRenderPreview()) || generation != m_PauseGeneration.load()) {
         av_frame_free(&frame);
         return;
     }
@@ -392,16 +399,39 @@ void Pacer::renderFrame(AVFrame* frame, uint64_t generation)
     m_VideoStats->totalPacerTimeUs += (beforeRender - (uint64_t)frame->pkt_dts);
 
     // Render it
+    auto presentedBefore = m_VsyncRenderer->presentedFrameSerial();
     m_VsyncRenderer->renderFrame(frame);
     uint64_t afterRender = LiGetMicroseconds();
+    bool presented = m_VsyncRenderer->presentedFrameSerial() != presentedBefore;
 
     m_VideoStats->totalRenderTimeUs += (afterRender - beforeRender);
-    m_VideoStats->renderedFrames++;
+    if (presented) {
+        m_VideoStats->renderedFrames++;
+        // Close the decoder/presentation budget on this thread, before a
+        // second queued frame can render while the main SDL loop catches up.
+        if (m_PreviewState && m_PreviewState->finishPreview() && m_PreviewPresented) {
+            m_PreviewPresented();
+        }
+    }
+    else if (m_PreviewState) {
+        // A hidden/occluded surface can fail indefinitely. Do not keep
+        // decoding IDRs to retry it; wait for focus/visibility restoration.
+        m_PreviewState->blockFailedPreview();
+    }
 
     // Wait until after next frame to free this one to ensure the GPU
     // doesn't stall or read garbage if the backing buffer gets returned
     // to the pool and the decoder tries to write a new frame into it
-    std::swap(frame, m_DeferredFreeFrame);
+    if (presented) {
+        std::swap(frame, m_DeferredFreeFrame);
+        av_frame_free(&m_DeferredFailedFrame);
+    }
+    else {
+        // A failed submission must not release the surface still displayed
+        // by a direct renderer. Retain the candidate separately in case GPU
+        // work was submitted before presentation failed.
+        std::swap(frame, m_DeferredFailedFrame);
+    }
     av_frame_free(&frame);
 
     // Drop frames if we have too many queued up for a while
@@ -463,18 +493,27 @@ void Pacer::submitFrame(AVFrame* frame)
 
     // Queue the frame and possibly wake up the render thread
     m_FrameQueueLock.lock();
-    if (m_Paused) {
+    if (m_Paused && (!canRenderPreview() || m_PreviewFrameQueued)) {
         m_FrameQueueLock.unlock();
         av_frame_free(&frame);
         return;
+    }
+    if (m_Paused) {
+        m_PreviewFrameQueued = true;
     }
     if (m_VsyncSource != nullptr) {
         dropFrameForEnqueue(m_PacingQueue);
         m_PacingQueue.enqueue(frame);
         m_FrameQueueLock.unlock();
         m_PacingQueueNotEmpty.wakeOne();
+        m_VsyncSignalled.wakeOne();
     }
     else {
         enqueueFrameForRenderingAndUnlock(frame);
     }
+}
+
+bool Pacer::canRenderPreview() const
+{
+    return m_PreviewState && m_PreviewState->canPresentPreview();
 }
