@@ -20,13 +20,13 @@ The tests exercise a real writer/reader process restart, per-host profile select
 bash tests/video-pause/run.sh
 ```
 
-The test runs the production frame pacer, validates AVFrame release, checks both rendering modes, drains 1,000 paused submissions, rejects stale wakeups, and performs 100 rapid pause/resume/shutdown cycles. It also checks keyframe recovery, a bounded first-frame preview, failed presentation, decoder generations, and independent monotonic focus/visibility timers. These tests do not emulate a complete GameStream host.
+The test runs the production frame pacer, validates AVFrame release, checks both rendering modes, drains 1,000 paused submissions, rejects stale wakeups, and performs 100 rapid pause/resume/shutdown cycles. An injected monotonic clock checks the one-second startup warmup, reference-dependent frame admission, exact deadline boundaries, expiry without new frames, clock wrap, a two-second failure bound before the first presentation, and stale generations. It also checks keyframe recovery, failed presentation, uninterrupted normal playback, and independent focus/visibility timers. These tests do not emulate a complete GameStream host. See [video-pause/README.md](video-pause/README.md) for the policy and clock details.
 
 ```sh
 bash tests/video-pause/run-startup-vulkan.sh
 ```
 
-This Linux smoke test needs access to an X11/XWayland display and a Vulkan driver. It uses the production Vulkan renderer and pacer: the initial black buffer does not complete the preview, one synthetic video frame does, and 100 further frames are discarded while paused. It never connects to a host or takes window focus. Exit code 77 means the graphical environment is unavailable, not a passing test.
+This Linux smoke test needs access to an X11/XWayland display and a Vulkan driver. It uses the production Vulkan renderer and pacer: the initial black buffer does not start the preview timer, several synthetic video images render during the injected one-second warmup, and queued candidates plus 100 further frames are discarded at its deadline. The last successfully presented image remains retained. It never connects to a host or takes window focus. Exit code 77 means the graphical environment is unavailable, not a passing test.
 
 ```sh
 bash tests/video-pause/run-renderer-presentation.sh
@@ -34,6 +34,14 @@ bash tests/video-pause/run-sdl-presentation.sh
 ```
 
 These tests exercise actual Vulkan and SDL presentation success/failure. Linux renderer changes were compiled on this client. Windows and macOS presentation hooks were reviewed but have not been compiled or tested on those platforms.
+
+## Paused native cursor
+
+```sh
+bash tests/input-cursor/run-tests.sh
+```
+
+This headless check compiles the production cursor and mouse handlers. It checks relative and absolute capture, paused hover and mouse input, cursor shortcuts, deferred capture intent, held-button release, focus restoration, and window recreation. It does not verify how a real desktop compositor draws the cursor.
 
 ## Desktop visibility
 
@@ -63,9 +71,10 @@ Compile with `CONFIG+=ui-test`. Set `QT_QPA_PLATFORM=offscreen`, `QT_QUICK_BACKE
 5. Repeat rapid switches and quit while paused. Check the temporary KWin script is removed after stream exit.
 6. Disable the options and confirm the previous continuous playback behavior.
 7. With unfocused pausing enabled before launch, verify the stream window appears immediately, then focus it and confirm video resumes. Repeat while the stream starts in the background, including with the Vulkan renderer.
-8. Start unfocused and verify one actual frame appears before video pauses. Set the video delay to 60 seconds and check focus restores/cancels the countdown.
+8. Start unfocused and verify actual video renders for about one second before freezing. Check the retained preview is readable. Set the video delay to 60 seconds and check focus restores/cancels the countdown.
 9. Enable audio mute independently of video. Test different audio focus/hidden delays, both together, and audio-only background controls.
+10. Hover over a paused stream and verify the local cursor is visible. Focus the stream and check normal cursor/capture behavior returns. Repeat with remote-desktop mouse mode, letterboxing, cursor visibility toggled, and a held mouse button while losing focus.
 
-The initial build was checked against the user's Windows host on 2026-10-05. The user confirmed video resumes after returning to its virtual desktop. While away, the client logged local video pause, retained three streaming UDP sockets, used about 0.5% CPU over a two-second sample, and reported 0% GPU decoder activity in three samples. These are spot checks, not a full performance comparison. The initial Vulkan startup issue was fixed and the user confirmed unfocused pause works with the visible window. A later same-desktop spot check again logged video pause, retained three streaming sockets, and used about 0.5% CPU; GPU counters were unavailable in that check. The subsequent actual first-frame preview and independent timers pass automated tests but still need a complete live host check.
+The initial build was checked against the user's Windows host on 2026-10-05. The user confirmed video resumes after returning to its virtual desktop. While away, the client logged local video pause, retained three streaming UDP sockets, used about 0.5% CPU over a two-second sample, and reported 0% GPU decoder activity in three samples. These are spot checks, not a full performance comparison. The initial Vulkan startup issue was fixed and the user confirmed unfocused pause works with the visible window. A later same-desktop spot check again logged video pause, retained three streaming sockets, and used about 0.5% CPU; GPU counters were unavailable in that check. The startup warmup and independent timers pass automated tests but still need a complete live host check.
 
 Network traffic and host encoding are expected to continue during local pause. Audio follows the separate mute setting. The rest of the live checklist remains pending; automated tests alone should not be described as measured performance savings.
