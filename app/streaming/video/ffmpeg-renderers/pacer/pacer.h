@@ -37,7 +37,8 @@ class Pacer
 public:
     Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats,
           VideoPauseState* previewState = nullptr,
-          std::function<void()> previewPresented = {});
+          std::function<void(bool)> previewChanged = {},
+          std::function<uint32_t()> previewClock = {});
 
     ~Pacer();
 
@@ -49,6 +50,8 @@ public:
 
     void renderOnMainThread();
     void setPaused(bool paused);
+    bool tickPreview();
+    void blockFailedPreview();
 
 private:
     static int vsyncThread(void* context);
@@ -62,6 +65,7 @@ private:
     void renderFrame(AVFrame* frame, uint64_t generation);
 
     void dropFrameForEnqueue(QQueue<AVFrame*>& queue);
+    void discardQueuedFramesLocked();
     bool canRenderPreview() const;
 
     QQueue<AVFrame*> m_RenderQueue;
@@ -80,8 +84,8 @@ private:
     std::atomic<bool> m_Paused{false};
     std::atomic<uint64_t> m_PauseGeneration{0};
     VideoPauseState* m_PreviewState;
-    std::function<void()> m_PreviewPresented;
-    bool m_PreviewFrameQueued = false;
+    std::function<void(bool)> m_PreviewChanged;
+    std::function<uint32_t()> m_PreviewClock;
 
     IVsyncSource* m_VsyncSource;
     IFFmpegRenderer* m_VsyncRenderer;
