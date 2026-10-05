@@ -722,7 +722,11 @@ void EGLRenderer::waitToRender()
 {
     // Ensure our GL context is active on this thread
     // See comment in renderFrame() for more details.
-    SDL_GL_MakeCurrent(m_Window, m_Context);
+    if (SDL_GL_MakeCurrent(m_Window, m_Context) < 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "SDL_GL_MakeCurrent() failed: %s", SDL_GetError());
+        return;
+    }
 
     // Our fence will wait until the previous frame is drawn (non-blocking swapbuffers case)
     // or until the new back buffer is available (blocking swapbuffers case)
@@ -758,7 +762,11 @@ void EGLRenderer::renderFrame(AVFrame* frame)
     // NB: It should already be current, unless the SDL render event watcher
     // performs a rendering operation (like a viewport update on resize) on
     // our fake SDL_Renderer. If it's already current, this is a no-op.
-    SDL_GL_MakeCurrent(m_Window, m_Context);
+    if (SDL_GL_MakeCurrent(m_Window, m_Context) < 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "SDL_GL_MakeCurrent() failed: %s", SDL_GetError());
+        return;
+    }
 
     // Find the native read-back format and load the shaders
     if (m_EGLImagePixelFormat == AV_PIX_FMT_NONE) {
@@ -787,7 +795,7 @@ void EGLRenderer::renderFrame(AVFrame* frame)
     }
 
     ssize_t plane_count = m_Backend->exportEGLImages(frame, m_EGLDisplay, imgs);
-    if (plane_count < 0)
+    if (plane_count <= 0)
         return;
     for (ssize_t i = 0; i < plane_count; ++i) {
         glActiveTexture(GL_TEXTURE0 + i);
@@ -859,6 +867,7 @@ void EGLRenderer::renderFrame(AVFrame* frame)
     }
 
     SDL_GL_SwapWindow(m_Window);
+    markFramePresented();
 
     if (m_BlockingSwapBuffers) {
         // This glClear() requires the new back buffer to complete. This ensures

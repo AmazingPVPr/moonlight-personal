@@ -644,4 +644,5 @@ void VDPAURenderer::renderFrame(AVFrame* frame)
                      m_VdpGetErrorString(status));
         return;
     }
+    markFramePresented();
 }

@@ -224,6 +224,9 @@ bool SdlRenderer::initialize(PDECODER_PARAMETERS params)
 
 void SdlRenderer::renderOverlay(Overlay::OverlayType type)
 {
+    if (Session::get() == nullptr) {
+        return;
+    }
     if (Session::get()->getOverlayManager().isOverlayEnabled(type)) {
         // If a new surface has been created for updated overlay data, convert it into a texture.
         // NB: We have to do this conversion at render-time because we can only interact
@@ -579,7 +582,11 @@ ReadbackRetry:
     SDL_RenderSetViewport(m_Renderer, &dst);
 
     // Draw the video content itself
-    SDL_RenderCopy(m_Renderer, m_Texture, nullptr, nullptr);
+    if (SDL_RenderCopy(m_Renderer, m_Texture, nullptr, nullptr) < 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "SDL_RenderCopy() failed: %s", SDL_GetError());
+        goto Exit;
+    }
 
     // Reset the viewport to the full window for overlay rendering
     SDL_RenderSetViewport(m_Renderer, nullptr);
@@ -590,6 +597,7 @@ ReadbackRetry:
     }
 
     SDL_RenderPresent(m_Renderer);
+    markFramePresented();
 
 Exit:
     if (swFrame != nullptr) {

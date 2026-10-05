@@ -356,5 +356,6 @@ void MmalRenderer::renderFrame(AVFrame* frame)
         // until rendering is complete. The reference is dropped in
         // InputPortCallback().
         mmal_buffer_header_acquire(buffer);
+        markFramePresented();
     }
 }

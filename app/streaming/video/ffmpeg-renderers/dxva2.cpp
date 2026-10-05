@@ -1027,4 +1027,7 @@ void DXVA2Renderer::renderFrame(AVFrame *frame)
         SDL_PushEvent(&event);
         return;
     }
+    if (hr == S_OK) {
+        markFramePresented();
+    }
 }

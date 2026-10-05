@@ -3,6 +3,7 @@
 #include "SDL_compat.h"
 
 #include <array>
+#include <atomic>
 
 #include "streaming/video/decoder.h"
 #include "streaming/video/overlaymanager.h"
@@ -160,6 +161,7 @@ public:
     virtual bool initialize(PDECODER_PARAMETERS params) = 0;
     virtual bool prepareDecoderContext(AVCodecContext* context, AVDictionary** options) = 0;
     virtual void renderFrame(AVFrame* frame) = 0;
+    uint64_t presentedFrameSerial() const { return m_PresentedFrameSerial.load(); }
 
     enum class InitFailureReason
     {
@@ -533,9 +535,11 @@ public:
 #endif
 
 protected:
+    void markFramePresented() { m_PresentedFrameSerial.fetch_add(1); }
     InitFailureReason m_InitFailureReason;
 
 private:
+    std::atomic<uint64_t> m_PresentedFrameSerial{0};
     RendererType m_Type;
 
     // Properties watched by hasFrameFormatChanged()
