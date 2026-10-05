@@ -1,3 +1,28 @@
+# Moonlight Personal
+
+Personal fork of Moonlight Qt 6.2.0 with saved stream presets and automatic background video pausing. This is an experimental client build; the original Moonlight client can remain installed alongside it.
+
+- Create, duplicate, rename, and delete presets in **Settings → Stream presets**. Presets include stream quality, audio, and input settings. Choose one in a computer's app list to remember that choice for that computer. Changes apply to the next stream.
+- **Pause video when hidden or minimized** also detects other virtual desktops on KDE Plasma/Wayland and EWMH-compatible X11 desktops. It is enabled by default. Unknown desktop visibility leaves video active.
+- **Pause video when unfocused** is a separate option, disabled by default. The existing audio mute option remains independent.
+- The client keeps receiving the stream while skipping video decoding and rendering. Returning resumes from a fresh keyframe. The host continues encoding, bandwidth remains in use, and allocated decoder memory can remain reserved.
+- This client uses its own settings, pairing identity, and cache under the application name **Moonlight Personal**. Pair it with your existing Sunshine/compatible Windows host in the usual way. No host changes are required.
+
+Linux development build, with the dependencies listed below and Qt DBus installed:
+
+```sh
+git submodule update --init --recursive
+mkdir -p build
+cd build
+qmake6 ../moonlight-qt.pro CONFIG+=release
+make -j6 release
+./app/moonlight-personal
+```
+
+The native build has been compiled on this Linux client with Qt 6.11.2, FFmpeg 9, and SDL2/SDL3 compatibility libraries. Profile persistence, desktop observer behavior, worker callbacks, pause recovery gates, and production render queues have automated tests. Actual Windows-host streaming, visual resume behavior, and resource savings still require a live check; see [tests/README.md](tests/README.md). Windows/macOS/Steam Link packaging scripts inherited from upstream have not been adapted for this fork.
+
+The upstream project and build instructions follow.
+
 # Moonlight PC
 
 [Moonlight PC](https://moonlight-stream.org) is an open source PC client for NVIDIA GameStream and [Sunshine](https://github.com/LizardByte/Sunshine).
