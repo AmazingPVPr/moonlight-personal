@@ -2,6 +2,7 @@ import QtQuick 2.9
 import QtQuick.Controls 2.2
 import QtQuick.Controls.Material 2.2
 
+import StreamingPreferences 1.0
 import AppModel 1.0
 import ComputerManager 1.0
 import SdlGamepadKeyNavigation 1.0
@@ -34,6 +35,7 @@ CenteredGridView {
     }
 
     StackView.onActivated: {
+        StreamingPreferences.setProfileHost(appModel.getComputerUuid())
         appModel.computerLost.connect(computerLost)
         activated = true
 

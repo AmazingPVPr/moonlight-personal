@@ -1,0 +1,11 @@
+QT += core dbus
+QT -= gui
+CONFIG += console c++17 link_pkgconfig
+CONFIG -= app_bundle
+PKGCONFIG += sdl2
+contains(DEFINES, HAS_X11): PKGCONFIG += xcb
+TEMPLATE = app
+TARGET = desktopvisibility-worker-test
+SOURCES += worker-test.cpp ../../app/streaming/desktopvisibility.cpp
+HEADERS += ../../app/streaming/desktopvisibility.h
+RESOURCES += ../../app/streaming/desktopvisibility.qrc

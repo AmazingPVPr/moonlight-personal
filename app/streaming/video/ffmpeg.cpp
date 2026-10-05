@@ -494,15 +494,6 @@ bool FFmpegVideoDecoder::completeInitialization(const AVCodec* decoder, enum AVP
     m_VideoFormat = params->videoFormat;
     m_CurrentTestMode = testMode;
 
-    // Don't bother initializing Pacer if we're not actually going to render
-    if (testMode != TestMode::TestFrameOnly) {
-        m_Pacer = new Pacer(m_FrontendRenderer, &m_ActiveWndVideoStats);
-        if (!m_Pacer->initialize(params->window, params->frameRate,
-                                 params->enableFramePacing || (params->enableVsync && (m_FrontendRenderer->getRendererAttributes() & RENDERER_ATTRIBUTE_FORCE_PACING)))) {
-            return false;
-        }
-    }
-
     m_VideoDecoderCtx = avcodec_alloc_context3(decoder);
     if (!m_VideoDecoderCtx) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
@@ -729,6 +720,28 @@ bool FFmpegVideoDecoder::completeInitialization(const AVCodec* decoder, enum AVP
         // Allow the renderer to perform final preparations for rendering
         m_FrontendRenderer->prepareToRender();
 
+        // Start pacing/render threads only after main-thread preparation has
+        // presented its initial buffer and released the render context. This
+        // also prevents simultaneous Vulkan swapchain acquisition at startup.
+        m_VideoPauseState.beginStream(params->initiallyPaused, params->startupPreview);
+        const Uint32 windowId = SDL_GetWindowID(params->window);
+        const uint32_t rendererGeneration = params->rendererGeneration;
+        m_Pacer = new Pacer(m_FrontendRenderer, &m_ActiveWndVideoStats,
+                           &m_VideoPauseState, [windowId, rendererGeneration](bool completed) {
+            SDL_Event event = {};
+            event.type = SDL_USEREVENT;
+            event.user.windowID = windowId;
+            event.user.code = completed ? SDL_CODE_STARTUP_PREVIEW_PRESENTED : SDL_CODE_STARTUP_PREVIEW_STARTED;
+            event.user.data1 = reinterpret_cast<void*>(uintptr_t(rendererGeneration));
+            SDL_PushEvent(&event);
+            LiWakeWaitForVideoFrame();
+        });
+        if (!m_Pacer->initialize(params->window, params->frameRate,
+                                 params->enableFramePacing || (params->enableVsync && (m_FrontendRenderer->getRendererAttributes() & RENDERER_ATTRIBUTE_FORCE_PACING)))) {
+            return false;
+        }
+        m_Pacer->setPaused(params->initiallyPaused);
+
         // Only create the decoder thread when instantiating the decoder for real. It will use APIs from
         // moonlight-common-c that can only be legally called with an established connection.
         m_DecoderThread = SDL_CreateThread(FFmpegVideoDecoder::decoderThreadProcThunk, "FFDecoder", (void*)this);
@@ -762,6 +775,7 @@ void FFmpegVideoDecoder::addVideoStats(VIDEO_STATS& src, VIDEO_STATS& dst)
     dst.totalFrames += src.totalFrames;
     dst.networkDroppedFrames += src.networkDroppedFrames;
     dst.pacerDroppedFrames += src.pacerDroppedFrames;
+    dst.pausedFrames += src.pausedFrames;
     dst.totalReassemblyTimeUs += src.totalReassemblyTimeUs;
     dst.totalDecodeTimeUs += src.totalDecodeTimeUs;
     dst.totalPacerTimeUs += src.totalPacerTimeUs;
@@ -925,6 +939,16 @@ void FFmpegVideoDecoder::stringifyVideoStats(VIDEO_STATS& stats, char* output, i
             return;
         }
 
+        offset += ret;
+    }
+
+    if (stats.pausedFrames != 0) {
+        ret = snprintf(&output[offset], length - offset,
+                       "Frames intentionally skipped while video is paused/resuming: %u\n",
+                       stats.pausedFrames);
+        if (ret < 0 || ret >= length - offset) {
+            return;
+        }
         offset += ret;
     }
 
@@ -1848,9 +1872,58 @@ int FFmpegVideoDecoder::decoderThreadProcThunk(void *context)
     return 0;
 }
 
+void FFmpegVideoDecoder::setVideoPaused(bool paused)
+{
+    if (m_VideoPauseState.setPaused(paused)) {
+        if (m_Pacer != nullptr) {
+            m_Pacer->setPaused(paused);
+        }
+        LiWakeWaitForVideoFrame();
+    }
+}
+
+void FFmpegVideoDecoder::refreshStartupPreview()
+{
+    if (m_VideoPauseState.refreshPreview()) {
+        m_Pacer->setPaused(m_VideoPauseState.isPaused());
+        LiWakeWaitForVideoFrame();
+    }
+}
+
+void FFmpegVideoDecoder::tickVideoPause()
+{
+    if (m_Pacer != nullptr && m_Pacer->tickPreview()) {
+        LiWakeWaitForVideoFrame();
+    }
+}
+
+uint32_t FFmpegVideoDecoder::videoPauseWaitTimeout(uint32_t maxMs)
+{
+    return m_VideoPauseState.previewWaitTimeout(maxMs, uint32_t(LiGetMicroseconds() / 1000));
+}
+
+bool FFmpegVideoDecoder::synchronizeVideoPause()
+{
+    tickVideoPause();
+    auto transition = m_VideoPauseState.synchronize();
+    if (transition.changed) {
+        // Only the decode thread accesses FFmpeg. Invalidate outstanding
+        // output and references before accepting a fresh IDR on resume.
+        avcodec_flush_buffers(m_VideoDecoderCtx);
+        m_FrameInfoQueue.clear();
+        m_FramesIn = m_FramesOut = 0;
+        m_ConsecutiveFailedDecodes = 0;
+        if (transition.requestKeyframe) {
+            LiRequestIdrFrame();
+        }
+    }
+    return transition.changed;
+}
+
 void FFmpegVideoDecoder::decoderThreadProc()
 {
     while (!SDL_AtomicGet(&m_DecoderThreadShouldQuit)) {
+        synchronizeVideoPause();
         if (m_FramesIn == m_FramesOut) {
             VIDEO_FRAME_HANDLE handle;
             PDECODE_UNIT du;
@@ -1881,8 +1954,18 @@ void FFmpegVideoDecoder::decoderThreadProc()
 
             int err;
             do {
+                if (synchronizeVideoPause() || !m_VideoPauseState.canReceiveOutput(uint32_t(LiGetMicroseconds() / 1000))) {
+                    err = AVERROR(EAGAIN);
+                    break;
+                }
                 err = avcodec_receive_frame(m_VideoDecoderCtx, frame);
                 if (err == 0) {
+                    // A transition can arrive while avcodec_receive_frame()
+                    // runs. Discard that old frame before using its metadata.
+                    if (synchronizeVideoPause() || !m_VideoPauseState.canReceiveOutput(uint32_t(LiGetMicroseconds() / 1000))) {
+                        err = AVERROR(EAGAIN);
+                        break;
+                    }
                     SDL_assert(m_FrameInfoQueue.size() == m_FramesIn - m_FramesOut);
                     m_FramesOut++;
 
@@ -2039,7 +2122,12 @@ void FFmpegVideoDecoder::decoderThreadProc()
                     m_ActiveWndVideoStats.decodedFrames++;
 
                     // Queue the frame for rendering (or render now if pacer is disabled)
-                    m_Pacer->submitFrame(frame);
+                    if (m_VideoPauseState.hasTransition() || !m_VideoPauseState.canReceiveOutput(uint32_t(LiGetMicroseconds() / 1000))) {
+                        av_frame_free(&frame);
+                    }
+                    else {
+                        m_Pacer->submitFrame(frame);
+                    }
                 }
                 else if (err == AVERROR(EAGAIN)) {
                     VIDEO_FRAME_HANDLE handle;
@@ -2058,6 +2146,8 @@ void FFmpegVideoDecoder::decoderThreadProc()
                 }
                 else {
                     char errorstring[512];
+
+                    m_Pacer->blockFailedPreview();
 
                     // FIXME: Should we pop an entry off m_FrameInfoQueue here?
 
@@ -2100,10 +2190,7 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
 
     SDL_assert(m_CurrentTestMode != TestMode::TestFrameOnly);
 
-    // If this is the first frame, reject anything that's not an IDR frame
-    if (m_FramesIn == 0 && du->frameType != FRAME_TYPE_IDR) {
-        return DR_NEED_IDR;
-    }
+    synchronizeVideoPause();
 
     if (!m_LastFrameNumber) {
         m_ActiveWndVideoStats.measurementStartUs = LiGetMicroseconds();
@@ -2156,6 +2243,13 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
     m_ActiveWndVideoStats.receivedFrames++;
     m_ActiveWndVideoStats.totalFrames++;
 
+    if (!m_VideoPauseState.acceptFrame(du->frameType == FRAME_TYPE_IDR, uint32_t(LiGetMicroseconds() / 1000))) {
+        m_ActiveWndVideoStats.pausedFrames++;
+        // The stream is still consumed so queues and connection liveness
+        // continue normally. Do not request an IDR for every skipped packet.
+        return DR_OK;
+    }
+
     int requiredBufferSize = du->fullLength;
     if (du->frameType == FRAME_TYPE_IDR) {
         // Add some extra space in case we need to do an SPS fixup
@@ -2207,6 +2301,8 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
             SDL_AtomicSet(&m_DecoderThreadShouldQuit, 1);
         }
 
+        m_Pacer->blockFailedPreview();
+        m_VideoPauseState.requireKeyframe();
         return DR_NEED_IDR;
     }
 
@@ -2220,4 +2316,3 @@ void FFmpegVideoDecoder::renderFrameOnMainThread()
 {
     m_Pacer->renderOnMainThread();
 }
-

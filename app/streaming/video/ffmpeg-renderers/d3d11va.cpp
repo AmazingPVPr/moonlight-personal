@@ -775,7 +775,7 @@ void D3D11VARenderer::renderFrame(AVFrame* frame)
     m_RenderDeviceContext->OMSetRenderTargets(1, m_RenderTargetView.GetAddressOf(), nullptr);
 
     // Render our video frame with the aspect-ratio adjusted viewport
-    renderVideo(frame);
+    const bool videoRendered = renderVideo(frame);
 
     // Render overlays on top of the video stream
     for (int i = 0; i < Overlay::OverlayMax; i++) {
@@ -841,6 +841,9 @@ void D3D11VARenderer::renderFrame(AVFrame* frame)
         event.type = SDL_RENDER_DEVICE_RESET;
         SDL_PushEvent(&event);
         return;
+    }
+    if (videoRendered && hr == S_OK) {
+        markFramePresented();
     }
 }
 
@@ -1019,7 +1022,7 @@ void D3D11VARenderer::bindColorConversion(bool frameChanged, AVFrame* frame)
     }
 }
 
-void D3D11VARenderer::renderVideo(AVFrame* frame)
+bool D3D11VARenderer::renderVideo(AVFrame* frame)
 {
     // Insert a fence to force the render context to wait for the decode context to finish writing
     if (m_DecodeDevice != m_RenderDevice) {
@@ -1043,7 +1046,7 @@ void D3D11VARenderer::renderVideo(AVFrame* frame)
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                          "Unexpected texture index: %u",
                          srvIndex);
-            return;
+            return false;
         }
     }
     else {
@@ -1093,6 +1096,7 @@ void D3D11VARenderer::renderVideo(AVFrame* frame)
             m_R2DFenceValue++;
         }
     }
+    return true;
 }
 
 // This function must NOT use any DXGI or ID3D11DeviceContext methods

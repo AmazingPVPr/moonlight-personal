@@ -3,6 +3,11 @@
 #include <QObject>
 #include <QRect>
 #include <QQmlEngine>
+#include <QMap>
+#include <QStringList>
+#include <QVariantMap>
+
+class QSettings;
 
 class StreamingPreferences : public QObject
 {
@@ -17,6 +22,21 @@ public:
     Q_INVOKABLE void save();
 
     void reload();
+
+    // The session owns this copy so editing a preset cannot change a running stream.
+    StreamingPreferences* createSessionSnapshot() const;
+
+    Q_PROPERTY(QStringList profileNames READ profileNames NOTIFY profileNamesChanged)
+    Q_PROPERTY(QString currentProfile READ currentProfile WRITE setCurrentProfile NOTIFY currentProfileChanged)
+
+    QStringList profileNames() const;
+    QString currentProfile() const;
+    void setCurrentProfile(const QString& name);
+    Q_INVOKABLE bool createProfile(const QString& name);
+    Q_INVOKABLE bool duplicateProfile(const QString& sourceName, const QString& newName);
+    Q_INVOKABLE bool renameProfile(const QString& oldName, const QString& newName);
+    Q_INVOKABLE bool deleteProfile(const QString& name);
+    Q_INVOKABLE void setProfileHost(const QString& hostUuid);
 
     enum AudioConfig
     {
@@ -150,6 +170,12 @@ public:
     Q_PROPERTY(WindowMode recommendedFullScreenMode MEMBER recommendedFullScreenMode CONSTANT)
     Q_PROPERTY(UIDisplayMode uiDisplayMode MEMBER uiDisplayMode NOTIFY uiDisplayModeChanged)
     Q_PROPERTY(bool swapMouseButtons MEMBER swapMouseButtons NOTIFY mouseButtonsChanged)
+    Q_PROPERTY(bool pauseVideoWhenHidden MEMBER pauseVideoWhenHidden NOTIFY pauseVideoWhenHiddenChanged)
+    Q_PROPERTY(bool pauseVideoWhenUnfocused MEMBER pauseVideoWhenUnfocused NOTIFY pauseVideoWhenUnfocusedChanged)
+    Q_PROPERTY(int unfocusedPauseDelaySeconds READ getUnfocusedPauseDelaySeconds WRITE setUnfocusedPauseDelaySeconds NOTIFY unfocusedPauseDelaySecondsChanged)
+    Q_PROPERTY(bool muteAudioWhenHidden MEMBER muteAudioWhenHidden NOTIFY muteAudioWhenHiddenChanged)
+    Q_PROPERTY(int unfocusedAudioMuteDelaySeconds READ getUnfocusedAudioMuteDelaySeconds WRITE setUnfocusedAudioMuteDelaySeconds NOTIFY unfocusedAudioMuteDelaySecondsChanged)
+    Q_PROPERTY(int hiddenAudioMuteDelaySeconds READ getHiddenAudioMuteDelaySeconds WRITE setHiddenAudioMuteDelaySeconds NOTIFY hiddenAudioMuteDelaySecondsChanged)
     Q_PROPERTY(bool muteOnFocusLoss MEMBER muteOnFocusLoss NOTIFY muteOnFocusLossChanged)
     Q_PROPERTY(bool backgroundGamepad MEMBER backgroundGamepad NOTIFY backgroundGamepadChanged)
     Q_PROPERTY(bool reverseScrollDirection MEMBER reverseScrollDirection NOTIFY reverseScrollDirectionChanged)
@@ -157,6 +183,13 @@ public:
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
+
+    int getUnfocusedPauseDelaySeconds() const;
+    void setUnfocusedPauseDelaySeconds(int seconds);
+    int getUnfocusedAudioMuteDelaySeconds() const;
+    void setUnfocusedAudioMuteDelaySeconds(int seconds);
+    int getHiddenAudioMuteDelaySeconds() const;
+    void setHiddenAudioMuteDelaySeconds(int seconds);
 
     Q_INVOKABLE bool retranslate();
 
@@ -184,6 +217,12 @@ public:
     bool showPerformanceOverlay;
     bool swapMouseButtons;
     bool muteOnFocusLoss;
+    bool pauseVideoWhenHidden;
+    bool pauseVideoWhenUnfocused;
+    int unfocusedPauseDelaySeconds = 0;
+    bool muteAudioWhenHidden;
+    int unfocusedAudioMuteDelaySeconds = 0;
+    int hiddenAudioMuteDelaySeconds = 0;
     bool backgroundGamepad;
     bool reverseScrollDirection;
     bool swapFaceButtons;
@@ -231,6 +270,14 @@ signals:
     void showPerformanceOverlayChanged();
     void mouseButtonsChanged();
     void muteOnFocusLossChanged();
+    void pauseVideoWhenHiddenChanged();
+    void pauseVideoWhenUnfocusedChanged();
+    void unfocusedPauseDelaySecondsChanged();
+    void muteAudioWhenHiddenChanged();
+    void unfocusedAudioMuteDelaySecondsChanged();
+    void hiddenAudioMuteDelaySecondsChanged();
+    void profileNamesChanged();
+    void currentProfileChanged();
     void backgroundGamepadChanged();
     void reverseScrollDirectionChanged();
     void swapFaceButtonsChanged();
@@ -240,7 +287,20 @@ signals:
     void rendererSelectionChanged();
 
 private:
-    explicit StreamingPreferences(QQmlEngine *qmlEngine);
+    explicit StreamingPreferences(QQmlEngine *qmlEngine, bool loadSettings = true);
+
+    QVariantMap captureStreamSettings() const;
+    void applyStreamSettings(const QVariantMap& values);
+    void rememberCurrentStreamSettings();
+    void loadProfiles(QSettings& settings);
+    void saveProfiles(QSettings& settings) const;
+    bool isValidProfileName(const QString& name) const;
+
+    QVariantMap m_DefaultStreamSettings;
+    QMap<QString, QVariantMap> m_StreamProfiles;
+    QMap<QString, QString> m_HostProfiles;
+    QString m_CurrentProfile = QStringLiteral("Default");
+    QString m_ProfileHost;
 
     QString getSuffixFromLanguage(Language lang);
 

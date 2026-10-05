@@ -5,6 +5,8 @@
 #include "settings/streamingpreferences.h"
 
 #define SDL_CODE_FRAME_READY 0
+#define SDL_CODE_STARTUP_PREVIEW_PRESENTED 1
+#define SDL_CODE_STARTUP_PREVIEW_STARTED 2
 
 #define MAX_SLICES 4
 
@@ -15,6 +17,7 @@ typedef struct _VIDEO_STATS {
     uint32_t totalFrames;
     uint32_t networkDroppedFrames;
     uint32_t pacerDroppedFrames;
+    uint32_t pausedFrames;                     // intentionally skipped locally
     uint16_t minHostProcessingLatency;         // low-res from RTP
     uint16_t maxHostProcessingLatency;         // low-res from RTP
     uint32_t totalHostProcessingLatency;       // low-res from RTP
@@ -45,6 +48,9 @@ typedef struct _DECODER_PARAMETERS {
     bool enableVsync;
     bool enableFramePacing;
     bool testOnly;
+    bool initiallyPaused;
+    bool startupPreview;
+    uint32_t rendererGeneration;
 } DECODER_PARAMETERS, *PDECODER_PARAMETERS;
 
 #define WINDOW_STATE_CHANGE_SIZE 0x01
@@ -74,6 +80,10 @@ public:
     virtual int getDecoderColorRange() = 0;
     virtual QSize getDecoderMaxResolution() = 0;
     virtual int submitDecodeUnit(PDECODE_UNIT du) = 0;
+    virtual void setVideoPaused(bool) {}
+    virtual void refreshStartupPreview() {}
+    virtual void tickVideoPause() {}
+    virtual uint32_t videoPauseWaitTimeout(uint32_t maxMs) { return maxMs; }
     virtual void renderFrameOnMainThread() = 0;
     virtual void setHdrMode(bool enabled) = 0;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info) = 0;

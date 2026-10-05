@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/streaming">
+        <file alias="desktopvisibility-kwin.js">desktopvisibility-kwin.js</file>
+    </qresource>
+</RCC>

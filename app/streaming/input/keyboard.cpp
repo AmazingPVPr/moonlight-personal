@@ -41,7 +41,7 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
                     "Detected mouse capture toggle combo");
 
         // Stop handling future input
-        setCaptureActive(!isCaptureActive());
+        setCaptureActive(!isCaptureRequested());
 
         // Force raise all keys to ensure they aren't stuck,
         // since we won't get their key up events.
@@ -85,14 +85,7 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Detected show mouse combo");
 
-        if (!SDL_GetRelativeMouseMode()) {
-            m_MouseCursorCapturedVisibilityState = !m_MouseCursorCapturedVisibilityState;
-            SDL_ShowCursor(m_MouseCursorCapturedVisibilityState);
-        }
-        else {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "Cursor can only be shown in remote desktop mouse mode");
-        }
+        toggleCursorVisibility();
         break;
 
     case KeyComboToggleMinimize:

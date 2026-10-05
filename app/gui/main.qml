@@ -11,6 +11,7 @@ import SystemProperties 1.0
 import SdlGamepadKeyNavigation 1.0
 
 ApplicationWindow {
+    title: qsTr("Moonshine Client")
     property bool pollingActive: false
 
     // Set by SettingsView to force the back operation to pop all
@@ -241,7 +242,7 @@ ApplicationWindow {
 
         Label {
             id: titleLabel
-            visible: toolBar.width > 700
+            visible: toolBar.width > 1000
             anchors.fill: parent
             text: stackView.currentItem.objectName
             font.pointSize: 20
@@ -267,6 +268,15 @@ ApplicationWindow {
                 Keys.onDownPressed: {
                     stackView.currentItem.forceActiveFocus(Qt.TabFocus)
                 }
+            }
+
+            ProfileControls {
+                objectName: "toolbarProfileControls"
+                compact: true
+                visible: stackView.currentItem instanceof PcView || stackView.currentItem instanceof AppView
+                contextName: stackView.currentItem instanceof AppView ? stackView.currentItem.objectName : ""
+                Layout.preferredWidth: toolBar.width > 800 ? 240 : 170
+                Layout.maximumWidth: toolBar.width / 3
             }
 
             // This label will appear when the window gets too small and

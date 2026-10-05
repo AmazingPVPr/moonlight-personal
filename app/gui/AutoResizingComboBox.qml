@@ -6,6 +6,7 @@ import SystemProperties 1.0
 
 // https://stackoverflow.com/questions/45029968/how-do-i-set-the-combobox-width-to-fit-the-largest-item
 ComboBox {
+    property bool restoreUiNavMode: true
     property int textWidth
     property int desiredWidth : leftPadding + textWidth + indicator.width + rightPadding
     property int maximumWidth : parent.width
@@ -48,7 +49,7 @@ ComboBox {
     }
 
     popup.onAboutToHide: {
-        SdlGamepadKeyNavigation.setUiNavMode(true)
+        SdlGamepadKeyNavigation.setUiNavMode(restoreUiNavMode)
     }
 
     Keys.onLeftPressed: {

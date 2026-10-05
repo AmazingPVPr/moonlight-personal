@@ -6,6 +6,7 @@
 
 #include "../bandwidth.h"
 #include "decoder.h"
+#include "pausestate.h"
 #include "ffmpeg-renderers/renderer.h"
 #include "ffmpeg-renderers/pacer/pacer.h"
 
@@ -26,6 +27,10 @@ public:
     virtual int getDecoderColorRange() override;
     virtual QSize getDecoderMaxResolution() override;
     virtual int submitDecodeUnit(PDECODE_UNIT du) override;
+    virtual void setVideoPaused(bool paused) override;
+    virtual void refreshStartupPreview() override;
+    virtual void tickVideoPause() override;
+    virtual uint32_t videoPauseWaitTimeout(uint32_t maxMs) override;
     virtual void renderFrameOnMainThread() override;
     virtual void setHdrMode(bool enabled) override;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info) override;
@@ -101,6 +106,7 @@ private:
                                    const enum AVPixelFormat* pixFmts);
 
     void decoderThreadProc();
+    bool synchronizeVideoPause();
 
     static int decoderThreadProcThunk(void* context);
 
@@ -132,6 +138,7 @@ private:
     TestMode m_CurrentTestMode;
     SDL_Thread* m_DecoderThread;
     SDL_atomic_t m_DecoderThreadShouldQuit;
+    VideoPauseState m_VideoPauseState;
 
     // Data buffers in the queued DU are not valid
     QQueue<DECODE_UNIT> m_FrameInfoQueue;

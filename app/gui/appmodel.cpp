@@ -1,7 +1,8 @@
 #include "appmodel.h"
 
 AppModel::AppModel(QObject *parent)
-    : QAbstractListModel(parent)
+    : QAbstractListModel(parent),
+      m_Computer(nullptr)
 {
     connect(&m_BoxArtManager, &BoxArtManager::boxArtLoadComplete,
             this, &AppModel::handleBoxArtLoaded);
@@ -19,6 +20,11 @@ void AppModel::initialize(ComputerManager* computerManager, int computerIndex, b
     m_ShowHiddenGames = showHiddenGames;
 
     updateAppList(m_Computer->appList);
+}
+
+QString AppModel::getComputerUuid() const
+{
+    return m_Computer ? m_Computer->uuid : QString();
 }
 
 int AppModel::getRunningAppId()
@@ -44,6 +50,7 @@ Session* AppModel::createSessionForApp(int appIndex)
     Q_ASSERT(appIndex < m_VisibleApps.count());
     NvApp app = m_VisibleApps.at(appIndex);
 
+    StreamingPreferences::get()->setProfileHost(m_Computer->uuid);
     return new Session(m_Computer, app);
 }
 

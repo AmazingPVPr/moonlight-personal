@@ -298,6 +298,9 @@ public:
         }
 
         [m_DisplayLayer enqueueSampleBuffer:sampleBuffer];
+        if (m_DisplayLayer.status != AVQueuedSampleBufferRenderingStatusFailed) {
+            markFramePresented();
+        }
 
         CFRelease(sampleBuffer);
     }}

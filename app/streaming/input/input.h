@@ -146,6 +146,16 @@ public:
 
     void setCaptureActive(bool active);
 
+    bool isCaptureRequested() const { return m_MouseCaptureRequested; }
+
+    // Called only on the SDL main thread. Pause preserves normal capture and
+    // visibility preferences while showing an unrestricted native cursor.
+    void setVideoPaused(bool paused);
+
+    void notifyWindowRecreated();
+
+    void toggleCursorVisibility();
+
     bool isMouseInVideoRegion(int mouseX, int mouseY, int windowWidth = -1, int windowHeight = -1);
 
     void updateKeyboardGrabState();
@@ -156,6 +166,12 @@ public:
     QString getUnmappedGamepads();
 
 private:
+    void applyCaptureState(bool active);
+
+    void updateCursorVisibility();
+
+    void raiseAllMouseButtons();
+
     enum KeyCombo {
         KeyComboQuit,
         KeyComboUngrabInput,
@@ -221,6 +237,10 @@ private:
     QSet<uint32_t> m_KeysDown;
     bool m_FakeMouseCaptureActive;
     bool m_KeyboardCaptureActive;
+    bool m_MouseCaptureRequested;
+    bool m_VideoPaused;
+    bool m_RelativeMouseModeBeforePause;
+    unsigned int m_MouseButtonsDown;
     QString m_OldIgnoreDevices;
     QString m_OldIgnoreDevicesExcept;
     QStringList m_IgnoreDeviceGuids;

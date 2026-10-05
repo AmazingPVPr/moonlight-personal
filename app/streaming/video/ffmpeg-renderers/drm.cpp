@@ -1970,10 +1970,13 @@ void DrmRenderer::renderFrame(AVFrame* frame)
     // NB2: Pacer references the AVFrame (which also references the AVBuffers backing the frame
     // and the opaque_ref which may store our DRM-PRIME mapping) for frames backed by DMA-BUFs in
     // order to keep those from being reused by the decoder while they're still being scanned out.
-    m_PropSetter.flipPlane(m_VideoPlane, fbId, 0);
+    const bool flipped = m_PropSetter.flipPlane(m_VideoPlane, fbId, 0);
 
     // Apply pending atomic transaction (if in atomic mode)
-    m_PropSetter.apply();
+    const bool applied = m_PropSetter.apply();
+    if (flipped && applied) {
+        markFramePresented();
+    }
 }
 
 bool DrmRenderer::testRenderFrame(AVFrame* frame) {

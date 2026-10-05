@@ -1,0 +1,11 @@
+QT += core gui qml network
+CONFIG += console c++17
+CONFIG -= app_bundle
+QMAKE_CXXFLAGS += -UNDEBUG
+TEMPLATE = app
+TARGET = cursor-tests
+INCLUDEPATH += ../../app ../../moonlight-common-c/moonlight-common-c/src ../../qmdnsengine/qmdnsengine/src/include ../../qmdnsengine
+CONFIG += link_pkgconfig
+PKGCONFIG += sdl2
+SOURCES += cursor_tests.cpp ../../app/streaming/input/cursor.cpp ../../app/streaming/input/mouse.cpp ../../app/settings/streamingpreferences.cpp
+HEADERS += ../../app/settings/streamingpreferences.h

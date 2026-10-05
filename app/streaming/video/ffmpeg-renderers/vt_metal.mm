@@ -570,6 +570,9 @@ public:
 
         // Wait for the command buffer to complete and free our CVMetalTextureCache references
         [commandBuffer waitUntilCompleted];
+        if (commandBuffer.status == MTLCommandBufferStatusCompleted) {
+            markFramePresented();
+        }
     }}
 
     // Caller frees frame after we return
@@ -593,10 +596,15 @@ public:
             return;
         }
 
-        // Start the display link if necessary
-        startDisplayLink();
+        // Confirm the first video image synchronously. The Pacer's one-frame
+        // startup budget must not mistake merely queueing a display-link frame
+        // for a successful presentation, or leave a paused window blank.
+        const bool initialPresentation = presentedFrameSerial() == 0;
+        if (!initialPresentation) {
+            startDisplayLink();
+        }
 
-        if (hasDisplayLink()) {
+        if (hasDisplayLink() && !initialPresentation) {
             // Move the buffers into a new AVFrame
             AVFrame* newFrame = av_frame_alloc();
             av_frame_move_ref(newFrame, frame);

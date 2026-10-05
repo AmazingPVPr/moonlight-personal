@@ -2,12 +2,14 @@
 
 #include <QSemaphore>
 #include <QQuickWindow>
+#include <atomic>
 
 #include <Limelight.h>
 #include <opus_multistream.h>
 #include "settings/streamingpreferences.h"
 #include "input/input.h"
 #include "video/decoder.h"
+#include "video/pausepolicy.h"
 #include "audio/renderers/renderer.h"
 #include "video/overlaymanager.h"
 
@@ -125,6 +127,11 @@ public:
 
     void setShouldExit(bool quitHostApp = false);
 
+public slots:
+    // Thread-safe: native desktop monitors may run outside Qt's main loop,
+    // which is suspended while Session::exec() processes SDL events.
+    void setDesktopVisible(bool visible);
+
 signals:
     void stageStarting(QString stage);
 
@@ -145,6 +152,8 @@ signals:
 
 private:
     void exec();
+    void updateVideoPause();
+    void refreshStartupPreview();
 
     bool startConnectionAsync();
 
@@ -188,7 +197,9 @@ private:
                        SDL_Window* window, int videoFormat, int width, int height,
                        int frameRate, bool enableVsync, bool enableFramePacing,
                        bool testOnly,
-                       IVideoDecoder*& chosenDecoder);
+                       IVideoDecoder*& chosenDecoder,
+                       bool initiallyPaused = false,
+                       uint32_t rendererGeneration = 0);
 
     static
     void clStageStarting(int stage);
@@ -255,7 +266,7 @@ private:
     IVideoDecoder* m_VideoDecoder;
     SDL_mutex* m_DecoderLock;
     bool m_AudioDisabled;
-    bool m_AudioMuted;
+    std::atomic<bool> m_AudioMuted;
     Uint32 m_FullScreenFlag;
     QQuickWindow* m_QtWindow;
     bool m_UnexpectedTermination;
@@ -264,6 +275,15 @@ private:
     int m_FlushingWindowEventsRef;
     QStringList m_LaunchWarnings;
     bool m_ShouldExit;
+    std::atomic<bool> m_DesktopVisible{true};
+    std::atomic<bool> m_VideoPaused{false};
+    std::atomic<bool> m_PushDecoderNeedsKeyframe{false};
+    bool m_WindowHidden = false;
+    bool m_WindowMinimized = false;
+    bool m_WindowFocused = true;
+    bool m_LastDesktopVisible = true;
+    VideoPausePolicy m_VideoPausePolicy;
+    uint32_t m_RendererGeneration = 0;
 
     bool m_AsyncConnectionSuccess;
     int m_PortTestResults;
