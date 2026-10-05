@@ -3,6 +3,11 @@
 #include <QObject>
 #include <QRect>
 #include <QQmlEngine>
+#include <QMap>
+#include <QStringList>
+#include <QVariantMap>
+
+class QSettings;
 
 class StreamingPreferences : public QObject
 {
@@ -17,6 +22,21 @@ public:
     Q_INVOKABLE void save();
 
     void reload();
+
+    // The session owns this copy so editing a preset cannot change a running stream.
+    StreamingPreferences* createSessionSnapshot() const;
+
+    Q_PROPERTY(QStringList profileNames READ profileNames NOTIFY profileNamesChanged)
+    Q_PROPERTY(QString currentProfile READ currentProfile WRITE setCurrentProfile NOTIFY currentProfileChanged)
+
+    QStringList profileNames() const;
+    QString currentProfile() const;
+    void setCurrentProfile(const QString& name);
+    Q_INVOKABLE bool createProfile(const QString& name);
+    Q_INVOKABLE bool duplicateProfile(const QString& sourceName, const QString& newName);
+    Q_INVOKABLE bool renameProfile(const QString& oldName, const QString& newName);
+    Q_INVOKABLE bool deleteProfile(const QString& name);
+    Q_INVOKABLE void setProfileHost(const QString& hostUuid);
 
     enum AudioConfig
     {
@@ -150,6 +170,8 @@ public:
     Q_PROPERTY(WindowMode recommendedFullScreenMode MEMBER recommendedFullScreenMode CONSTANT)
     Q_PROPERTY(UIDisplayMode uiDisplayMode MEMBER uiDisplayMode NOTIFY uiDisplayModeChanged)
     Q_PROPERTY(bool swapMouseButtons MEMBER swapMouseButtons NOTIFY mouseButtonsChanged)
+    Q_PROPERTY(bool pauseVideoWhenHidden MEMBER pauseVideoWhenHidden NOTIFY pauseVideoWhenHiddenChanged)
+    Q_PROPERTY(bool pauseVideoWhenUnfocused MEMBER pauseVideoWhenUnfocused NOTIFY pauseVideoWhenUnfocusedChanged)
     Q_PROPERTY(bool muteOnFocusLoss MEMBER muteOnFocusLoss NOTIFY muteOnFocusLossChanged)
     Q_PROPERTY(bool backgroundGamepad MEMBER backgroundGamepad NOTIFY backgroundGamepadChanged)
     Q_PROPERTY(bool reverseScrollDirection MEMBER reverseScrollDirection NOTIFY reverseScrollDirectionChanged)
@@ -184,6 +206,8 @@ public:
     bool showPerformanceOverlay;
     bool swapMouseButtons;
     bool muteOnFocusLoss;
+    bool pauseVideoWhenHidden;
+    bool pauseVideoWhenUnfocused;
     bool backgroundGamepad;
     bool reverseScrollDirection;
     bool swapFaceButtons;
@@ -231,6 +255,10 @@ signals:
     void showPerformanceOverlayChanged();
     void mouseButtonsChanged();
     void muteOnFocusLossChanged();
+    void pauseVideoWhenHiddenChanged();
+    void pauseVideoWhenUnfocusedChanged();
+    void profileNamesChanged();
+    void currentProfileChanged();
     void backgroundGamepadChanged();
     void reverseScrollDirectionChanged();
     void swapFaceButtonsChanged();
@@ -240,7 +268,20 @@ signals:
     void rendererSelectionChanged();
 
 private:
-    explicit StreamingPreferences(QQmlEngine *qmlEngine);
+    explicit StreamingPreferences(QQmlEngine *qmlEngine, bool loadSettings = true);
+
+    QVariantMap captureStreamSettings() const;
+    void applyStreamSettings(const QVariantMap& values);
+    void rememberCurrentStreamSettings();
+    void loadProfiles(QSettings& settings);
+    void saveProfiles(QSettings& settings) const;
+    bool isValidProfileName(const QString& name) const;
+
+    QVariantMap m_DefaultStreamSettings;
+    QMap<QString, QVariantMap> m_StreamProfiles;
+    QMap<QString, QString> m_HostProfiles;
+    QString m_CurrentProfile = QStringLiteral("Default");
+    QString m_ProfileHost;
 
     QString getSuffixFromLanguage(Language lang);
 

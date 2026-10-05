@@ -52,6 +52,42 @@
 #define SER_KEEPAWAKE "keepawake"
 #define SER_LANGUAGE "language"
 #define SER_RENDERER "renderer"
+#define SER_PAUSEHIDDEN "pausevideowhenhidden"
+#define SER_PAUSEUNFOCUSED "pausevideowhenunfocused"
+
+// Only settings that control a stream belong to presets. Discovery, application
+// language/window state, diagnostics and the background pause policy stay global.
+#define STREAM_PROFILE_FIELDS(X) \
+    X(SER_WIDTH, width, int, displayModeChanged) \
+    X(SER_HEIGHT, height, int, displayModeChanged) \
+    X(SER_FPS, fps, int, displayModeChanged) \
+    X(SER_BITRATE, bitrateKbps, int, bitrateChanged) \
+    X(SER_UNLOCK_BITRATE, unlockBitrate, bool, unlockBitrateChanged) \
+    X(SER_AUTOADJUSTBITRATE, autoAdjustBitrate, bool, autoAdjustBitrateChanged) \
+    X(SER_VSYNC, enableVsync, bool, enableVsyncChanged) \
+    X(SER_GAMEOPTS, gameOptimizations, bool, gameOptimizationsChanged) \
+    X(SER_HOSTAUDIO, playAudioOnHost, bool, playAudioOnHostChanged) \
+    X(SER_MULTICONT, multiController, bool, multiControllerChanged) \
+    X(SER_QUITAPPAFTER, quitAppAfter, bool, quitAppAfterChanged) \
+    X(SER_ABSMOUSEMODE, absoluteMouseMode, bool, absoluteMouseModeChanged) \
+    X(SER_ABSTOUCHMODE, absoluteTouchMode, bool, absoluteTouchModeChanged) \
+    X(SER_FRAMEPACING, framePacing, bool, framePacingChanged) \
+    X(SER_GAMEPADMOUSE, gamepadMouse, bool, gamepadMouseChanged) \
+    X(SER_SHOWPERFOVERLAY, showPerformanceOverlay, bool, showPerformanceOverlayChanged) \
+    X(SER_SWAPMOUSEBUTTONS, swapMouseButtons, bool, mouseButtonsChanged) \
+    X(SER_MUTEONFOCUSLOSS, muteOnFocusLoss, bool, muteOnFocusLossChanged) \
+    X(SER_BACKGROUNDGAMEPAD, backgroundGamepad, bool, backgroundGamepadChanged) \
+    X(SER_REVERSESCROLL, reverseScrollDirection, bool, reverseScrollDirectionChanged) \
+    X(SER_SWAPFACEBUTTONS, swapFaceButtons, bool, swapFaceButtonsChanged) \
+    X(SER_KEEPAWAKE, keepAwake, bool, keepAwakeChanged) \
+    X(SER_HDR, enableHdr, bool, enableHdrChanged) \
+    X(SER_YUV444, enableYUV444, bool, enableYUV444Changed) \
+    X(SER_CAPTURESYSKEYS, captureSysKeysMode, int, captureSysKeysModeChanged) \
+    X(SER_AUDIOCFG, audioConfig, int, audioConfigChanged) \
+    X(SER_VIDEOCFG, videoCodecConfig, int, videoCodecConfigChanged) \
+    X(SER_VIDEODEC, videoDecoderSelection, int, videoDecoderSelectionChanged) \
+    X(SER_RENDERER, rendererSelection, int, rendererSelectionChanged) \
+    X(SER_WINDOWMODE, windowMode, int, windowModeChanged)
 
 #define CURRENT_DEFAULT_VER 2
 
@@ -59,10 +95,12 @@ static StreamingPreferences* s_GlobalPrefs;
 
 Q_GLOBAL_STATIC(QReadWriteLock, s_GlobalPrefsLock)
 
-StreamingPreferences::StreamingPreferences(QQmlEngine *qmlEngine)
+StreamingPreferences::StreamingPreferences(QQmlEngine *qmlEngine, bool loadSettings)
     : m_QmlEngine(qmlEngine)
 {
-    reload();
+    if (loadSettings) {
+        reload();
+    }
 }
 
 StreamingPreferences* StreamingPreferences::get(QQmlEngine *qmlEngine)
@@ -147,6 +185,8 @@ void StreamingPreferences::reload()
     packetSize = settings.value(SER_PACKETSIZE, 0).toInt();
     swapMouseButtons = settings.value(SER_SWAPMOUSEBUTTONS, false).toBool();
     muteOnFocusLoss = settings.value(SER_MUTEONFOCUSLOSS, false).toBool();
+    pauseVideoWhenHidden = settings.value(SER_PAUSEHIDDEN, true).toBool();
+    pauseVideoWhenUnfocused = settings.value(SER_PAUSEUNFOCUSED, false).toBool();
     backgroundGamepad = settings.value(SER_BACKGROUNDGAMEPAD, false).toBool();
     reverseScrollDirection = settings.value(SER_REVERSESCROLL, false).toBool();
     swapFaceButtons = settings.value(SER_SWAPFACEBUTTONS, false).toBool();
@@ -193,6 +233,19 @@ void StreamingPreferences::reload()
         videoCodecConfig = VCC_AUTO;
         enableHdr = true;
     }
+
+    // Legacy top-level values are the global fallback. Never overwrite them
+    // with the last host's preset, including when reloading at startup.
+    m_DefaultStreamSettings = captureStreamSettings();
+    loadProfiles(settings);
+    m_CurrentProfile = m_HostProfiles.value(m_ProfileHost, QStringLiteral("Default"));
+    if (!m_StreamProfiles.contains(m_CurrentProfile)) {
+        m_CurrentProfile = QStringLiteral("Default");
+    }
+    applyStreamSettings(m_CurrentProfile == QStringLiteral("Default") ?
+                            m_DefaultStreamSettings : m_StreamProfiles.value(m_CurrentProfile));
+    emit profileNamesChanged();
+    emit currentProfileChanged();
 }
 
 bool StreamingPreferences::retranslate()
@@ -321,47 +374,247 @@ QString StreamingPreferences::getSuffixFromLanguage(StreamingPreferences::Langua
 
 void StreamingPreferences::save()
 {
+    rememberCurrentStreamSettings();
     QSettings settings;
 
-    settings.setValue(SER_WIDTH, width);
-    settings.setValue(SER_HEIGHT, height);
-    settings.setValue(SER_FPS, fps);
-    settings.setValue(SER_BITRATE, bitrateKbps);
-    settings.setValue(SER_UNLOCK_BITRATE, unlockBitrate);
-    settings.setValue(SER_AUTOADJUSTBITRATE, autoAdjustBitrate);
-    settings.setValue(SER_VSYNC, enableVsync);
-    settings.setValue(SER_GAMEOPTS, gameOptimizations);
-    settings.setValue(SER_HOSTAUDIO, playAudioOnHost);
-    settings.setValue(SER_MULTICONT, multiController);
+    for (auto it = m_DefaultStreamSettings.cbegin(); it != m_DefaultStreamSettings.cend(); ++it) {
+        settings.setValue(it.key(), it.value());
+    }
     settings.setValue(SER_MDNS, enableMdns);
-    settings.setValue(SER_QUITAPPAFTER, quitAppAfter);
-    settings.setValue(SER_ABSMOUSEMODE, absoluteMouseMode);
-    settings.setValue(SER_ABSTOUCHMODE, absoluteTouchMode);
-    settings.setValue(SER_FRAMEPACING, framePacing);
     settings.setValue(SER_CONNWARNINGS, connectionWarnings);
     settings.setValue(SER_CONFWARNINGS, configurationWarnings);
     settings.setValue(SER_RICHPRESENCE, richPresence);
-    settings.setValue(SER_GAMEPADMOUSE, gamepadMouse);
-    settings.setValue(SER_PACKETSIZE, packetSize);
     settings.setValue(SER_DETECTNETBLOCKING, detectNetworkBlocking);
-    settings.setValue(SER_SHOWPERFOVERLAY, showPerformanceOverlay);
-    settings.setValue(SER_AUDIOCFG, static_cast<int>(audioConfig));
-    settings.setValue(SER_HDR, enableHdr);
-    settings.setValue(SER_YUV444, enableYUV444);
-    settings.setValue(SER_VIDEOCFG, static_cast<int>(videoCodecConfig));
-    settings.setValue(SER_VIDEODEC, static_cast<int>(videoDecoderSelection));
-    settings.setValue(SER_RENDERER, static_cast<int>(rendererSelection));
-    settings.setValue(SER_WINDOWMODE, static_cast<int>(windowMode));
     settings.setValue(SER_UIDISPLAYMODE, static_cast<int>(uiDisplayMode));
     settings.setValue(SER_LANGUAGE, static_cast<int>(language));
     settings.setValue(SER_DEFAULTVER, CURRENT_DEFAULT_VER);
-    settings.setValue(SER_SWAPMOUSEBUTTONS, swapMouseButtons);
-    settings.setValue(SER_MUTEONFOCUSLOSS, muteOnFocusLoss);
-    settings.setValue(SER_BACKGROUNDGAMEPAD, backgroundGamepad);
-    settings.setValue(SER_REVERSESCROLL, reverseScrollDirection);
-    settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
-    settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
-    settings.setValue(SER_KEEPAWAKE, keepAwake);
+    settings.setValue(SER_PAUSEHIDDEN, pauseVideoWhenHidden);
+    settings.setValue(SER_PAUSEUNFOCUSED, pauseVideoWhenUnfocused);
+    saveProfiles(settings);
+}
+
+QVariantMap StreamingPreferences::captureStreamSettings() const
+{
+    QVariantMap values;
+#define CAPTURE_VALUE(key, member, type, signal) values.insert(key, static_cast<type>(member));
+    STREAM_PROFILE_FIELDS(CAPTURE_VALUE)
+#undef CAPTURE_VALUE
+    values.insert(SER_PACKETSIZE, packetSize);
+    return values;
+}
+
+void StreamingPreferences::applyStreamSettings(const QVariantMap& values)
+{
+    // Assign the whole snapshot before notifying QML: dependent bindings (such
+    // as automatic bitrate) must always see one coherent resolution/FPS pair.
+#define APPLY_VALUE(key, member, type, signal) \
+    const auto member##Value = static_cast<decltype(member)>( \
+        values.value(key, static_cast<type>(member)).value<type>()); \
+    const bool member##WasChanged = member != member##Value; \
+    member = member##Value;
+    STREAM_PROFILE_FIELDS(APPLY_VALUE)
+#undef APPLY_VALUE
+    if (values.contains(SER_PACKETSIZE)) {
+        packetSize = values.value(SER_PACKETSIZE).toInt();
+    }
+#define NOTIFY_VALUE(key, member, type, signal) if (member##WasChanged) { emit signal(); }
+    STREAM_PROFILE_FIELDS(NOTIFY_VALUE)
+#undef NOTIFY_VALUE
+}
+
+void StreamingPreferences::rememberCurrentStreamSettings()
+{
+    if (m_CurrentProfile == QStringLiteral("Default")) {
+        m_DefaultStreamSettings = captureStreamSettings();
+    }
+    else if (m_StreamProfiles.contains(m_CurrentProfile)) {
+        m_StreamProfiles[m_CurrentProfile] = captureStreamSettings();
+    }
+}
+
+QStringList StreamingPreferences::profileNames() const
+{
+    QStringList names = m_StreamProfiles.keys();
+    names.prepend(QStringLiteral("Default"));
+    return names;
+}
+
+QString StreamingPreferences::currentProfile() const
+{
+    return m_CurrentProfile;
+}
+
+void StreamingPreferences::setCurrentProfile(const QString& name)
+{
+    if (name == m_CurrentProfile || (name != QStringLiteral("Default") && !m_StreamProfiles.contains(name))) {
+        return;
+    }
+    save();
+    m_CurrentProfile = name;
+    if (!m_ProfileHost.isEmpty()) {
+        m_HostProfiles[m_ProfileHost] = name;
+    }
+    applyStreamSettings(name == QStringLiteral("Default") ?
+                            m_DefaultStreamSettings : m_StreamProfiles.value(name));
+    save();
+    emit currentProfileChanged();
+}
+
+void StreamingPreferences::setProfileHost(const QString& hostUuid)
+{
+    if (m_ProfileHost == hostUuid) {
+        return;
+    }
+    save();
+    m_ProfileHost = hostUuid;
+    m_CurrentProfile = m_HostProfiles.value(hostUuid, QStringLiteral("Default"));
+    if (!m_StreamProfiles.contains(m_CurrentProfile)) {
+        m_CurrentProfile = QStringLiteral("Default");
+    }
+    applyStreamSettings(m_CurrentProfile == QStringLiteral("Default") ?
+                            m_DefaultStreamSettings : m_StreamProfiles.value(m_CurrentProfile));
+    emit currentProfileChanged();
+}
+
+bool StreamingPreferences::isValidProfileName(const QString& name) const
+{
+    return !name.isEmpty() && name.size() <= 80 && name == name.trimmed() &&
+           name.compare(QStringLiteral("Default"), Qt::CaseInsensitive) != 0;
+}
+
+bool StreamingPreferences::createProfile(const QString& name)
+{
+    return duplicateProfile(m_CurrentProfile, name);
+}
+
+bool StreamingPreferences::duplicateProfile(const QString& sourceName, const QString& newName)
+{
+    if (!isValidProfileName(newName) || m_StreamProfiles.contains(newName) ||
+        (sourceName != QStringLiteral("Default") && !m_StreamProfiles.contains(sourceName))) {
+        return false;
+    }
+    rememberCurrentStreamSettings();
+    m_StreamProfiles.insert(newName, sourceName == QStringLiteral("Default") ?
+                                      m_DefaultStreamSettings : m_StreamProfiles.value(sourceName));
+    emit profileNamesChanged();
+    setCurrentProfile(newName);
+    return true;
+}
+
+bool StreamingPreferences::renameProfile(const QString& oldName, const QString& newName)
+{
+    if (!m_StreamProfiles.contains(oldName) || !isValidProfileName(newName) || m_StreamProfiles.contains(newName)) {
+        return false;
+    }
+    rememberCurrentStreamSettings();
+    m_StreamProfiles.insert(newName, m_StreamProfiles.take(oldName));
+    for (auto it = m_HostProfiles.begin(); it != m_HostProfiles.end(); ++it) {
+        if (it.value() == oldName) {
+            it.value() = newName;
+        }
+    }
+    if (m_CurrentProfile == oldName) {
+        m_CurrentProfile = newName;
+        emit currentProfileChanged();
+    }
+    save();
+    emit profileNamesChanged();
+    return true;
+}
+
+bool StreamingPreferences::deleteProfile(const QString& name)
+{
+    if (!m_StreamProfiles.contains(name)) {
+        return false;
+    }
+    if (m_CurrentProfile == name) {
+        setCurrentProfile(QStringLiteral("Default"));
+    }
+    m_StreamProfiles.remove(name);
+    for (auto it = m_HostProfiles.begin(); it != m_HostProfiles.end(); ++it) {
+        if (it.value() == name) {
+            it.value() = QStringLiteral("Default");
+        }
+    }
+    save();
+    emit profileNamesChanged();
+    return true;
+}
+
+void StreamingPreferences::loadProfiles(QSettings& settings)
+{
+    m_StreamProfiles.clear();
+    m_HostProfiles.clear();
+    const int profileCount = settings.beginReadArray("streamprofiles");
+    for (int i = 0; i < profileCount; i++) {
+        settings.setArrayIndex(i);
+        const QString name = settings.value("name").toString();
+        if (isValidProfileName(name)) {
+            // Merging with the fallback handles fields added by future versions.
+            QVariantMap values = m_DefaultStreamSettings;
+            const QVariantMap savedValues = settings.value("settings").toMap();
+            for (auto it = savedValues.cbegin(); it != savedValues.cend(); ++it) {
+                if (values.contains(it.key())) {
+                    values[it.key()] = it.value();
+                }
+            }
+            m_StreamProfiles.insert(name, values);
+        }
+    }
+    settings.endArray();
+    const int hostCount = settings.beginReadArray("hoststreamprofiles");
+    for (int i = 0; i < hostCount; i++) {
+        settings.setArrayIndex(i);
+        const QString hostUuid = settings.value("uuid").toString();
+        const QString name = settings.value("profile").toString();
+        if (!hostUuid.isEmpty() && (name == QStringLiteral("Default") || m_StreamProfiles.contains(name))) {
+            m_HostProfiles.insert(hostUuid, name);
+        }
+    }
+    settings.endArray();
+}
+
+void StreamingPreferences::saveProfiles(QSettings& settings) const
+{
+    // Arrays avoid treating slashes in user names or host identifiers as groups.
+    settings.remove("streamprofiles");
+    settings.beginWriteArray("streamprofiles", m_StreamProfiles.size());
+    int index = 0;
+    for (auto it = m_StreamProfiles.cbegin(); it != m_StreamProfiles.cend(); ++it) {
+        settings.setArrayIndex(index++);
+        settings.setValue("name", it.key());
+        settings.setValue("settings", it.value());
+    }
+    settings.endArray();
+    settings.remove("hoststreamprofiles");
+    settings.beginWriteArray("hoststreamprofiles", m_HostProfiles.size());
+    index = 0;
+    for (auto it = m_HostProfiles.cbegin(); it != m_HostProfiles.cend(); ++it) {
+        settings.setArrayIndex(index++);
+        settings.setValue("uuid", it.key());
+        settings.setValue("profile", it.value());
+    }
+    settings.endArray();
+}
+
+StreamingPreferences* StreamingPreferences::createSessionSnapshot() const
+{
+    auto* snapshot = new StreamingPreferences(nullptr, false);
+#define COPY_VALUE(key, member, type, signal) snapshot->member = member;
+    STREAM_PROFILE_FIELDS(COPY_VALUE)
+#undef COPY_VALUE
+    snapshot->packetSize = packetSize;
+    snapshot->recommendedFullScreenMode = recommendedFullScreenMode;
+    snapshot->enableMdns = enableMdns;
+    snapshot->connectionWarnings = connectionWarnings;
+    snapshot->configurationWarnings = configurationWarnings;
+    snapshot->richPresence = richPresence;
+    snapshot->detectNetworkBlocking = detectNetworkBlocking;
+    snapshot->uiDisplayMode = uiDisplayMode;
+    snapshot->language = language;
+    snapshot->pauseVideoWhenHidden = pauseVideoWhenHidden;
+    snapshot->pauseVideoWhenUnfocused = pauseVideoWhenUnfocused;
+    return snapshot;
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)
