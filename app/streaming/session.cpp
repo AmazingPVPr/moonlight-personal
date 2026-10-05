@@ -1816,6 +1816,12 @@ void Session::updateVideoPause()
                 hidden,
                 m_Preferences->pauseVideoWhenHidden, m_Preferences->pauseVideoWhenUnfocused,
                 m_Preferences->unfocusedPauseDelaySeconds, nowMs);
+    // Keep the native pointer available while background video is paused,
+    // including its short startup preview. Capture resumes with normal input
+    // behavior when the pause policy allows the stream to run again.
+    if (m_InputHandler != nullptr) {
+        m_InputHandler->setVideoPaused(paused);
+    }
     if (m_VideoPaused.exchange(paused) == paused) {
         return;
     }
@@ -2045,6 +2051,12 @@ void Session::exec()
         // Reevaluate on every iteration, including input floods and quiet
         // windows, so the focus deadline is independent of frame delivery.
         updateVideoPause();
+        // The decoder's preview deadline must also expire without new frames.
+        SDL_LockMutex(m_DecoderLock);
+        if (m_VideoDecoder != nullptr) {
+            m_VideoDecoder->tickVideoPause();
+        }
+        SDL_UnlockMutex(m_DecoderLock);
 #if SDL_VERSION_ATLEAST(2, 0, 18) && !defined(STEAM_LINK)
         // SDL 2.0.18 has a proper wait event implementation that uses platform
         // support to block on events rather than polling on Windows, macOS, X11,
@@ -2055,14 +2067,20 @@ void Session::exec()
         // NB: This behavior was introduced in SDL 2.0.16, but had a few critical
         // issues that could cause indefinite timeouts, delayed joystick detection,
         // and other problems.
-        if (!SDL_WaitEventTimeout(&event, int(m_VideoPausePolicy.audioWaitTimeout(
+        Uint32 eventWaitMs = m_VideoPausePolicy.audioWaitTimeout(
                 m_VideoPausePolicy.waitTimeout(
                 1000, m_VideoPaused.load(), m_Preferences->pauseVideoWhenUnfocused,
                 m_Preferences->unfocusedPauseDelaySeconds, SDL_GetTicks()),
                 m_AudioMuted.load(), m_Preferences->muteOnFocusLoss,
                 m_Preferences->unfocusedAudioMuteDelaySeconds,
                 m_Preferences->muteAudioWhenHidden, m_Preferences->hiddenAudioMuteDelaySeconds,
-                SDL_GetTicks())))) {
+                SDL_GetTicks());
+        SDL_LockMutex(m_DecoderLock);
+        if (m_VideoDecoder != nullptr) {
+            eventWaitMs = m_VideoDecoder->videoPauseWaitTimeout(eventWaitMs);
+        }
+        SDL_UnlockMutex(m_DecoderLock);
+        if (!SDL_WaitEventTimeout(&event, int(eventWaitMs))) {
             presence.runCallbacks();
             continue;
         }
@@ -2108,8 +2126,15 @@ void Session::exec()
                 if (event.user.windowID == SDL_GetWindowID(m_Window) &&
                         uint32_t(uintptr_t(event.user.data1)) == m_RendererGeneration) {
                     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                                "First stream frame presented; startup preview complete");
+                                "Startup video preview complete; background pause policy applies");
                     updateVideoPause();
+                }
+                break;
+            case SDL_CODE_STARTUP_PREVIEW_STARTED:
+                if (event.user.windowID == SDL_GetWindowID(m_Window) &&
+                        uint32_t(uintptr_t(event.user.data1)) == m_RendererGeneration) {
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                "First stream frame presented; one-second startup preview started");
                 }
                 break;
             case SDL_CODE_FLUSH_WINDOW_EVENT_BARRIER:
@@ -2368,6 +2393,7 @@ void Session::exec()
                     m_InputHandler->setCaptureActive(true);
                     needsPostDecoderCreationCapture = false;
                 }
+                m_InputHandler->notifyWindowRecreated();
             }
 
             // Request an IDR frame to complete the reset
