@@ -163,6 +163,12 @@ public slots:
             failOpen(QStringLiteral("The stream window's virtual desktop could not be identified; video remains active."));
         }
         else {
+            if (!m_HasKnownReport || !m_LastError.isEmpty()) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "Desktop visibility monitoring active; stream window is %s",
+                            visible ? "visible" : "hidden");
+            }
+            m_HasKnownReport = true;
             m_LastError.clear();
             m_Visible(visible);
         }
@@ -236,6 +242,7 @@ private:
     QDBusServiceWatcher m_Watcher;
     QTimer m_HealthTimer;
     QElapsedTimer m_LastReport;
+    bool m_HasKnownReport = false;
     bool m_ScriptLoaded = false;
 };
 

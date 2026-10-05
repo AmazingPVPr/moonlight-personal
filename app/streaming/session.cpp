@@ -2105,6 +2105,11 @@ void Session::exec()
             break;
 
         case SDL_WINDOWEVENT:
+            // Decoder probes use temporary SDL windows. Their queued events
+            // must not hide/pause the stream or alter its focus policy.
+            if (event.window.windowID != SDL_GetWindowID(m_Window)) {
+                break;
+            }
             // Early handling of some events
             switch (event.window.event) {
             case SDL_WINDOWEVENT_FOCUS_LOST:
