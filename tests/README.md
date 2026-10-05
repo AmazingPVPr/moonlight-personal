@@ -51,7 +51,7 @@ mkdir -p /tmp/moonlight-desktop-tests
 cd /tmp/moonlight-desktop-tests
 qmake6 /path/to/moonlight-personal/tests/desktopvisibility/worker-test.pro
 make -j4
-dbus-run-session -- ./desktopvisibility-worker-test
+dbus-run-session -- env MOONLIGHT_PRIVATE_TEST_BUS=1 SDL_VIDEODRIVER=dummy ./desktopvisibility-worker-test
 ```
 
 The JavaScript checks execute the production observer against a mock compositor. The worker test uses a private message bus to verify callbacks with the main Qt loop blocked, sender validation, unsupported fallback, and cleanup. It does not modify a real KWin session.
