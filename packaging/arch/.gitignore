@@ -1,0 +1,11 @@
+/src/
+/pkg/
+/moonshine-client/
+/moonlight-common-c/
+/qmdnsengine/
+/SDL_GameControllerDB/
+/enet/
+/nanors/
+/*.pkg.tar.*
+/*.src.tar.*
+/*.log
