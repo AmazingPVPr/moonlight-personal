@@ -132,67 +132,162 @@ static void testQueuedSurfacesAndResume(bool threaded)
     assert(released == 1001);
 }
 
-static void testExactlyOnePresentedPreview(bool threaded)
+static void testOneSecondPresentedWarmup(bool threaded)
 {
     std::atomic<int> released{0};
-    std::atomic<int> notified{0};
+    std::atomic<int> started{0};
+    std::atomic<int> completed{0};
+    std::atomic<uint32_t> clock{100};
     CountingRenderer renderer(threaded);
     VideoPauseState state;
     state.beginStream(true, true);
     assert(state.synchronize().requestKeyframe);
-    assert(!state.acceptFrame(false));
-    assert(state.acceptFrame(true));
-    assert(state.canReceiveOutput()); // paused decoder must drain that one IDR
-    assert(!state.acceptFrame(true));
+    assert(!state.acceptFrame(false, clock));
     VIDEO_STATS stats = {};
     {
-        Pacer pacer(&renderer, &stats, &state, [&] { notified++; });
+        Pacer pacer(&renderer, &stats, &state,
+                    [&](bool done) { (done ? completed : started)++; },
+                    [&] { return clock.load(); });
         assert(pacer.initialize(nullptr, 60, false));
         pacer.setPaused(true);
-        // A delayed SDL/main-thread acknowledgment cannot permit extra frames.
-        for (int i = 0; i < 1000; i++) {
+        // Several reference-dependent images can settle during this second.
+        const uint32_t presentationTimes[] = {100, 350, 600, 850, 1099};
+        for (int i = 0; i < 5; ++i) {
+            clock = presentationTimes[i];
+            assert(state.acceptFrame(i == 0, clock));
+            assert(state.canReceiveOutput(clock));
             pacer.submitFrame(makeFrame(released));
-        }
-        if (threaded) {
-            assert(renderer.waitForRender(1));
-            Uint32 waitingAt = SDL_GetTicks();
-            while (notified == 0 && SDL_GetTicks() - waitingAt < 3000) {
-                SDL_Delay(1);
+            if (threaded) {
+                assert(renderer.waitForRender(i + 1));
+                if (i == 0) {
+                    Uint32 waitingAt = SDL_GetTicks();
+                    while (started == 0 && SDL_GetTicks() - waitingAt < 3000) {
+                        SDL_Delay(1);
+                    }
+                }
             }
-            assert(notified == 1);
+            else {
+                pacer.renderOnMainThread();
+            }
+            assert(started == 1);
+            assert(completed == 0);
+            assert(state.previewWaitTimeout(1000, clock) == 1100 - clock);
         }
-        else {
-            pacer.renderOnMainThread();
+        assert(renderer.rendered == 5);
+        assert(renderer.presentedFrameSerial() == 5);
+        assert(state.isPreviewPending());
+        // A silent host still expires the timer. Pending main-thread frames
+        // are drained without erasing the last successfully presented image.
+        if (!threaded) {
+            for (int i = 0; i < 3; ++i) pacer.submitFrame(makeFrame(released));
+            assert(released == 4);
         }
-        assert(renderer.rendered == 1);
-        assert(renderer.presentedFrameSerial() == 1);
-        assert(notified == 1);
+        clock = 1100;
+        assert(!state.acceptFrame(false, clock));
+        assert(!state.canReceiveOutput(clock));
+        assert(state.previewWaitTimeout(1000, clock) == 0);
+        assert(pacer.tickPreview());
+        assert(!pacer.tickPreview());
+        assert(completed == 1);
         assert(!state.isPreviewPending());
-        auto completed = state.synchronize();
-        assert(completed.changed && completed.paused && !completed.requestKeyframe);
-        for (int i = 0; i < 1000; i++) {
-            assert(!state.acceptFrame(true));
+        auto finished = state.synchronize();
+        assert(finished.changed && finished.paused && !finished.requestKeyframe);
+        for (int i = 0; i < 1000; ++i) {
+            assert(!state.acceptFrame(true, clock));
             pacer.submitFrame(makeFrame(released));
         }
         pacer.renderOnMainThread();
-        assert(renderer.rendered == 1);
+        assert(renderer.rendered == 5);
+        assert(state.previewWaitTimeout(1000, clock) == 1000);
 
         state.setPaused(false);
         assert(state.synchronize().requestKeyframe);
-        assert(!state.acceptFrame(false));
-        assert(state.acceptFrame(true));
+        assert(!state.acceptFrame(false, clock));
+        assert(state.acceptFrame(true, clock));
         pacer.setPaused(false);
         pacer.submitFrame(makeFrame(released));
-        if (threaded) {
-            assert(renderer.waitForRender(2));
-        }
-        else {
-            pacer.renderOnMainThread();
-        }
-        assert(renderer.rendered == 2);
-        assert(notified == 1);
+        if (threaded) assert(renderer.waitForRender(6));
+        else pacer.renderOnMainThread();
+        assert(renderer.rendered == 6);
+        assert(started == 1 && completed == 1);
     }
-    assert(released == 2001);
+    assert(stats.renderedFrames == 6);
+    assert(released == (threaded ? 1006 : 1009));
+}
+
+static void testWarmupFailureDeadlineAndGenerations()
+{
+    VideoPauseState state;
+    state.beginStream(true, true);
+    state.synchronize();
+    assert(state.previewWaitTimeout(1000, 100) == 1000);
+    assert(!state.acceptFrame(false, 100));
+    assert(state.acceptFrame(true, 100));
+    auto oldGeneration = state.previewGeneration();
+    // P-frames must neither be discarded nor extend the first-input timeout.
+    for (uint32_t now = 101; now < 2100; ++now) {
+        assert(state.acceptFrame(false, now));
+        assert(state.canReceiveOutput(now));
+    }
+    assert(state.previewWaitTimeout(1000, 2099) == 1);
+    assert(!state.acceptFrame(false, 2100));
+    assert(!state.canReceiveOutput(2100));
+    assert(!state.notePresented(2100, oldGeneration));
+    assert(state.advancePreview(2100) == VideoPauseState::PreviewChange::Blocked);
+    auto failed = state.synchronize();
+    assert(failed.changed && failed.paused && !failed.requestKeyframe);
+    assert(state.previewWaitTimeout(1000, 2100) == 1000);
+    for (int i = 0; i < 1000; ++i) assert(!state.acceptFrame(true, 3000 + i));
+    assert(state.refreshPreview());
+    assert(state.synchronize().requestKeyframe);
+    assert(!state.notePresented(5000, oldGeneration));
+    assert(state.previewWaitTimeout(1000, 5000) == 1000);
+    assert(state.acceptFrame(true, 5000));
+    assert(state.notePresented(5000, state.previewGeneration()));
+    assert(!state.notePresented(5500, state.previewGeneration()));
+    assert(state.previewWaitTimeout(1000, 5999) == 1);
+    assert(state.advancePreview(6000) == VideoPauseState::PreviewChange::Completed);
+    assert(!state.refreshPreview());
+    assert(state.synchronize().changed);
+
+    // Deadline zero is valid after 32-bit clock wrap, not an unarmed sentinel.
+    state.beginStream(true, true);
+    state.synchronize();
+    assert(state.acceptFrame(true, 0xfffffc18U));
+    assert(state.notePresented(0xfffffc18U, state.previewGeneration()));
+    assert(state.canReceiveOutput(0xffffffffU));
+    assert(state.previewWaitTimeout(1000, 0xffffffffU) == 1);
+    assert(!state.canReceiveOutput(0));
+    assert(state.advancePreview(0) == VideoPauseState::PreviewChange::Completed);
+}
+
+static void testWarmupDoesNotInterruptContinuousPlayback()
+{
+    VideoPauseState state;
+    state.beginStream(false, true);
+    assert(!state.synchronize().changed);
+    assert(state.acceptFrame(true, 100));
+    assert(state.notePresented(100, state.previewGeneration()));
+    assert(state.advancePreview(1100) == VideoPauseState::PreviewChange::Completed);
+    assert(!state.synchronize().changed);
+    assert(state.acceptFrame(false, 1100));
+    state.setPaused(true);
+    auto paused = state.synchronize();
+    assert(paused.changed && !paused.requestKeyframe);
+    assert(!state.acceptFrame(true, 1200));
+
+    // Changing focus during warmup preserves its existing deadline, while
+    // obtaining an IDR after any skipped input/reference invalidation.
+    state.beginStream(false, true);
+    state.synchronize();
+    assert(state.acceptFrame(true, 100));
+    assert(state.notePresented(100, state.previewGeneration()));
+    state.setPaused(true);
+    assert(state.synchronize().requestKeyframe);
+    assert(!state.acceptFrame(false, 500));
+    assert(state.acceptFrame(true, 500));
+    assert(state.previewWaitTimeout(1000, 1099) == 1);
+    assert(state.advancePreview(1100) == VideoPauseState::PreviewChange::Completed);
 }
 
 static void testFailedRenderPreservesDisplayedSurface()
@@ -226,12 +321,13 @@ static void testFailedPreviewWaitsForVisibility()
     CountingRenderer renderer(false);
     renderer.successful = false;
     VideoPauseState state;
+    uint32_t clock = 100;
     state.beginStream(true, true);
     state.synchronize();
-    assert(state.acceptFrame(true));
+    assert(state.acceptFrame(true, clock));
     VIDEO_STATS stats = {};
     {
-        Pacer pacer(&renderer, &stats, &state);
+        Pacer pacer(&renderer, &stats, &state, {}, [&] { return clock; });
         assert(pacer.initialize(nullptr, 60, false));
         pacer.setPaused(true);
         pacer.submitFrame(makeFrame(released));
@@ -240,24 +336,27 @@ static void testFailedPreviewWaitsForVisibility()
         assert(renderer.presentedFrameSerial() == 0);
         assert(stats.renderedFrames == 0);
         assert(state.isPreviewPending());
-        assert(!state.canPresentPreview());
+        assert(!state.canPresentPreview(clock));
         auto failed = state.synchronize();
         assert(failed.changed && !failed.requestKeyframe);
-        for (int i = 0; i < 1000; i++) {
-            assert(!state.acceptFrame(true));
+        for (int i = 0; i < 1000; ++i) {
+            assert(!state.acceptFrame(true, clock));
             pacer.submitFrame(makeFrame(released));
         }
         pacer.renderOnMainThread();
         assert(renderer.rendered == 1);
         assert(state.refreshPreview());
         assert(state.synchronize().requestKeyframe);
-        assert(state.acceptFrame(true));
+        assert(state.acceptFrame(true, clock));
         renderer.successful = true;
         pacer.setPaused(true);
         pacer.submitFrame(makeFrame(released));
         pacer.renderOnMainThread();
         assert(renderer.presentedFrameSerial() == 1);
         assert(stats.renderedFrames == 1);
+        assert(state.isPreviewPending());
+        clock += 1000;
+        assert(pacer.tickPreview());
         assert(!state.isPreviewPending());
     }
     assert(released == 1002);
@@ -358,12 +457,14 @@ int main()
     testPendingMainThreadFramesAreReleased();
     testQueuedSurfacesAndResume(false);
     testQueuedSurfacesAndResume(true);
-    testExactlyOnePresentedPreview(false);
-    testExactlyOnePresentedPreview(true);
+    testOneSecondPresentedWarmup(false);
+    testOneSecondPresentedWarmup(true);
+    testWarmupFailureDeadlineAndGenerations();
+    testWarmupDoesNotInterruptContinuousPlayback();
     testFailedPreviewWaitsForVisibility();
     testFailedRenderPreservesDisplayedSurface();
     testIndependentFocusAudioDeadlines();
     testPausedThreadTeardown();
     SDL_Quit();
-    std::puts("Video keyframe recovery and production pacer pause/resume tests passed.");
+    std::puts("Video keyframe recovery, timed startup warmup, and production pacer pause/resume tests passed.");
 }

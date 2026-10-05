@@ -124,38 +124,51 @@ int main(int argc, char** argv)
                 assert(initialBuffers == 1);
             }
 
-            // Combine the real renderer and production one-frame gate. A
+            // Combine the real renderer and production timed warmup. A
             // black mapping buffer must never spend the real-video budget.
             assert(renderer.presentedFrameSerial() == 0);
             VideoPauseState preview;
             preview.beginStream(true, true);
             assert(preview.synchronize().requestKeyframe);
-            assert(preview.acceptFrame(true));
-            assert(preview.canReceiveOutput());
+            assert(preview.acceptFrame(true, 100));
+            assert(preview.canReceiveOutput(100));
+            unsigned started = 0;
             unsigned completed = 0;
+            uint32_t clock = 100;
             stats = {};
             {
-                Pacer pacer(&renderer, &stats, &preview, [&] { completed++; });
+                Pacer pacer(&renderer, &stats, &preview,
+                            [&](bool done) { (done ? completed : started)++; },
+                            [&] { return clock; });
                 assert(pacer.initialize(window, 60, false));
                 pacer.setPaused(true);
-                renderer.waitToRender();
-                for (unsigned i = 0; i < 100; ++i) {
+                const uint32_t presentationTimes[] = {100, 350, 600, 850, 1099};
+                for (int i = 0; i < 5; ++i) {
+                    clock = presentationTimes[i];
+                    if (i != 0) assert(preview.acceptFrame(false, clock));
+                    renderer.waitToRender();
                     pacer.submitFrame(makeVideoImage());
+                    pacer.renderOnMainThread();
+                    assert(renderer.videoFrames == i + 1);
+                    assert(renderer.presentedFrameSerial() == unsigned(i + 1));
+                    assert(stats.renderedFrames == unsigned(i + 1));
+                    assert(started == 1 && completed == 0);
+                    assert(preview.isPreviewPending());
+                    assert(preview.previewWaitTimeout(1000, clock) == 1100 - clock);
                 }
-                pacer.renderOnMainThread();
-                assert(renderer.videoFrames == 1);
-                assert(renderer.presentedFrameSerial() == 1);
-                assert(stats.renderedFrames == 1);
+                // Deadline handling must work without another video frame or
+                // renderer call, and release queued candidates immediately.
+                for (int i = 0; i < 3; ++i) pacer.submitFrame(makeVideoImage());
+                clock = 1100;
+                assert(pacer.tickPreview());
                 assert(completed == 1);
                 assert(!preview.isPreviewPending());
-                assert(!preview.canReceiveOutput());
-                for (unsigned i = 0; i < 100; ++i) {
-                    pacer.submitFrame(makeVideoImage());
-                }
+                assert(!preview.canReceiveOutput(clock));
+                for (unsigned i = 0; i < 100; ++i) pacer.submitFrame(makeVideoImage());
                 pacer.renderOnMainThread();
-                assert(renderer.videoFrames == 1);
-                assert(renderer.presentedFrameSerial() == 1);
-                assert(completed == 1);
+                assert(renderer.videoFrames == 5);
+                assert(renderer.presentedFrameSerial() == 5);
+                assert(started == 1 && completed == 1);
             }
         }
     }
@@ -165,5 +178,5 @@ int main(int argc, char** argv)
     if (unavailable) {
         return 77;
     }
-    std::puts("Production Vulkan black mapping and exactly one real image while paused passed (no host connection).");
+    std::puts("Production Vulkan black mapping and one second of real images before pausing passed (no host connection).");
 }
