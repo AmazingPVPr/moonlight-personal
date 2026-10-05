@@ -6,6 +6,7 @@
 #include <QQueue>
 #include <QMutex>
 #include <QWaitCondition>
+#include <atomic>
 
 // The maximum number of frames pacer will ever hold is:
 // - 3 frames in the pacing queue
@@ -42,6 +43,7 @@ public:
     void signalVsync();
 
     void renderOnMainThread();
+    void setPaused(bool paused);
 
 private:
     static int vsyncThread(void* context);
@@ -52,7 +54,7 @@ private:
 
     void enqueueFrameForRenderingAndUnlock(AVFrame* frame);
 
-    void renderFrame(AVFrame* frame);
+    void renderFrame(AVFrame* frame, uint64_t generation);
 
     void dropFrameForEnqueue(QQueue<AVFrame*>& queue);
 
@@ -67,7 +69,9 @@ private:
     SDL_Thread* m_RenderThread;
     SDL_Thread* m_VsyncThread;
     AVFrame* m_DeferredFreeFrame;
-    bool m_Stopping;
+    std::atomic<bool> m_Stopping;
+    std::atomic<bool> m_Paused{false};
+    std::atomic<uint64_t> m_PauseGeneration{0};
 
     IVsyncSource* m_VsyncSource;
     IFFmpegRenderer* m_VsyncRenderer;

@@ -45,7 +45,14 @@ Pacer::Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats) :
 
 Pacer::~Pacer()
 {
+    // Change the wait predicate and signal under the same mutex used by
+    // waiters, so a paused thread cannot miss its shutdown notification.
+    m_FrameQueueLock.lock();
     m_Stopping = true;
+    m_PacingQueueNotEmpty.wakeAll();
+    m_VsyncSignalled.wakeAll();
+    m_RenderQueueNotEmpty.wakeAll();
+    m_FrameQueueLock.unlock();
 
     // Stop the V-sync thread
     if (m_VsyncThread != nullptr) {
@@ -92,13 +99,40 @@ void Pacer::renderOnMainThread()
 
     if (!m_RenderQueue.isEmpty()) {
         AVFrame* frame = m_RenderQueue.dequeue();
+        auto generation = m_PauseGeneration.load();
         m_FrameQueueLock.unlock();
 
-        renderFrame(frame);
+        renderFrame(frame, generation);
     }
     else {
         m_FrameQueueLock.unlock();
     }
+}
+
+void Pacer::setPaused(bool paused)
+{
+    m_FrameQueueLock.lock();
+    if (m_Paused.exchange(paused) != paused) {
+        m_PauseGeneration.fetch_add(1);
+    }
+    if (paused) {
+        // Release queued hardware surfaces, without submitting them to the GPU.
+        // Keep the last presented surface until the next render or destruction,
+        // since the renderer/GPU may still be using it.
+        while (!m_RenderQueue.isEmpty()) {
+            AVFrame* frame = m_RenderQueue.dequeue();
+            av_frame_free(&frame);
+        }
+        while (!m_PacingQueue.isEmpty()) {
+            AVFrame* frame = m_PacingQueue.dequeue();
+            av_frame_free(&frame);
+        }
+        m_PacingQueueHistory.clear();
+        m_RenderQueueHistory.clear();
+    }
+    m_FrameQueueLock.unlock();
+    m_PacingQueueNotEmpty.wakeAll();
+    m_VsyncSignalled.wakeAll();
 }
 
 int Pacer::vsyncThread(void *context)
@@ -113,6 +147,14 @@ int Pacer::vsyncThread(void *context)
 
     bool async = me->m_VsyncSource->isAsync();
     while (!me->m_Stopping) {
+        me->m_FrameQueueLock.lock();
+        while (me->m_Paused && !me->m_Stopping) {
+            me->m_VsyncSignalled.wait(&me->m_FrameQueueLock);
+        }
+        me->m_FrameQueueLock.unlock();
+        if (me->m_Stopping) {
+            break;
+        }
         if (async) {
             // Wait for the VSync source to invoke signalVsync() or 100ms to elapse
             me->m_FrameQueueLock.lock();
@@ -164,9 +206,10 @@ int Pacer::renderThread(void* context)
         }
 
         AVFrame* frame = me->m_RenderQueue.dequeue();
+        auto generation = me->m_PauseGeneration.load();
         me->m_FrameQueueLock.unlock();
 
-        me->renderFrame(frame);
+        me->renderFrame(frame, generation);
     }
 
     // Notify the renderer that it is being destroyed soon
@@ -204,6 +247,11 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
     SDL_assert(m_MaxVideoFps != 0);
 
     m_FrameQueueLock.lock();
+
+    if (m_Paused) {
+        m_FrameQueueLock.unlock();
+        return;
+    }
 
     // If the queue length history entries are large, be strict
     // about dropping excess frames.
@@ -249,7 +297,7 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
             return;
         }
 
-        if (m_Stopping) {
+        if (m_Stopping || m_Paused || m_PacingQueue.isEmpty()) {
             m_FrameQueueLock.unlock();
             return;
         }
@@ -326,11 +374,19 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing)
 
 void Pacer::signalVsync()
 {
-    m_VsyncSignalled.wakeOne();
+    if (!m_Paused) {
+        m_VsyncSignalled.wakeOne();
+    }
 }
 
-void Pacer::renderFrame(AVFrame* frame)
+void Pacer::renderFrame(AVFrame* frame, uint64_t generation)
 {
+    // A single render already in flight may finish during the transition.
+    // No further queued frame should be presented while paused.
+    if (m_Paused || generation != m_PauseGeneration.load()) {
+        av_frame_free(&frame);
+        return;
+    }
     // Count time spent in Pacer's queues
     uint64_t beforeRender = LiGetMicroseconds();
     m_VideoStats->totalPacerTimeUs += (beforeRender - (uint64_t)frame->pkt_dts);
@@ -407,6 +463,11 @@ void Pacer::submitFrame(AVFrame* frame)
 
     // Queue the frame and possibly wake up the render thread
     m_FrameQueueLock.lock();
+    if (m_Paused) {
+        m_FrameQueueLock.unlock();
+        av_frame_free(&frame);
+        return;
+    }
     if (m_VsyncSource != nullptr) {
         dropFrameForEnqueue(m_PacingQueue);
         m_PacingQueue.enqueue(frame);
