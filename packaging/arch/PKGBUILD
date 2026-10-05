@@ -1,6 +1,6 @@
 pkgname=moonshine-client-git
-pkgver=6.2.0.r64.ge058a1d
-pkgrel=2
+pkgver=6.2.0.r75.g46eb9a2
+pkgrel=3
 pkgdesc='Moonlight streaming client with presets and independent background video and audio controls'
 arch=('x86_64')
 url='https://github.com/AmazingPVPr/moonlight-personal'
@@ -79,6 +79,7 @@ check() {
   make
   ./profile-tests
   bash "$srcdir/moonshine-client/tests/video-pause/run.sh"
+  bash "$srcdir/moonshine-client/tests/input-cursor/run-tests.sh"
   desktop-file-validate "$srcdir/moonshine-client/app/deploy/linux/com.amazingpvpr.MoonshineClient.desktop"
 }
 
