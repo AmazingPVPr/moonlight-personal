@@ -30,6 +30,10 @@ void SdlInputHandler::handleMouseButtonEvent(SDL_MouseButtonEvent* event)
 {
     int button;
 
+    if (m_VideoPaused) {
+        return;
+    }
+
     if (event->which == SDL_TOUCH_MOUSEID) {
         // Ignore synthetic mouse events
         return;
@@ -84,6 +88,13 @@ void SdlInputHandler::handleMouseButtonEvent(SDL_MouseButtonEvent* event)
             button = BUTTON_RIGHT;
     }
 
+    if (event->state == SDL_PRESSED) {
+        m_MouseButtonsDown |= 1U << button;
+    }
+    else {
+        m_MouseButtonsDown &= ~(1U << button);
+    }
+
     LiSendMouseButtonEvent(event->state == SDL_PRESSED ?
                                BUTTON_ACTION_PRESS :
                                BUTTON_ACTION_RELEASE,
@@ -92,6 +103,11 @@ void SdlInputHandler::handleMouseButtonEvent(SDL_MouseButtonEvent* event)
 
 void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
 {
+    if (m_VideoPaused) {
+        updateCursorVisibility();
+        return;
+    }
+
     if (!isCaptureActive()) {
         // Not capturing
         return;
@@ -163,7 +179,9 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
 
         // Adjust the cursor visibility if applicable
         if (mouseInVideoRegion ^ m_MouseWasInVideoRegion) {
-            SDL_ShowCursor((mouseInVideoRegion && m_MouseCursorCapturedVisibilityState == SDL_DISABLE) ? SDL_DISABLE : SDL_ENABLE);
+            // Update the cached region before applying the native cursor policy.
+            m_MouseWasInVideoRegion = mouseInVideoRegion;
+            updateCursorVisibility();
             if (!mouseInVideoRegion && buttonState != 0) {
                 // If we still have a button pressed on leave, wait for that to come up
                 // before we stop sending mouse position events.
@@ -180,6 +198,10 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
 
 void SdlInputHandler::handleMouseWheelEvent(SDL_MouseWheelEvent* event)
 {
+    if (m_VideoPaused) {
+        return;
+    }
+
     if (!isCaptureActive()) {
         // Not capturing
         return;
@@ -284,6 +306,10 @@ bool SdlInputHandler::isMouseInVideoRegion(int mouseX, int mouseY, int windowWid
 
 void SdlInputHandler::updatePointerRegionLock()
 {
+    if (!m_Window) {
+        return;
+    }
+
     // Pointer region lock is irrelevant in relative mouse mode
     if (SDL_GetRelativeMouseMode()) {
         return;
